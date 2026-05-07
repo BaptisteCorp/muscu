@@ -256,50 +256,18 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
                 _readOnly ? null : (v) => setState(() => _primary = v!),
           ),
           const SizedBox(height: 12),
-          // Secondary muscles — multi-select. Primary is excluded so you
-          // don't pick the same group twice.
-          Card(
-            elevation: 0,
-            color: Theme.of(context).colorScheme.surfaceContainerLow,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(children: [
-                    const Text('Muscles secondaires',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    const SizedBox(width: 4),
-                    _InfoIconBtn(
-                      title: 'Muscles secondaires',
-                      body:
-                          "Tous les autres groupes qui travaillent en plus "
-                          "du principal. Sert au calcul du volume par "
-                          "muscle (un développé couché compte aussi un peu "
-                          "pour épaules et triceps).",
-                    ),
-                  ]),
-                  const SizedBox(height: 8),
-                  Wrap(spacing: 6, runSpacing: 4, children: [
-                    for (final m in MuscleGroup.values)
-                      if (m != _primary)
-                        FilterChip(
-                          label: Text(_muscleLabel(m)),
-                          selected: _secondary.contains(m),
-                          onSelected: _readOnly
-                              ? null
-                              : (sel) => setState(() {
-                                    if (sel) {
-                                      _secondary.add(m);
-                                    } else {
-                                      _secondary.remove(m);
-                                    }
-                                  }),
-                        ),
-                  ]),
-                ],
-              ),
-            ),
+          // Secondary muscles — collapsed multi-select to avoid covering
+          // half the screen with chips. Tap to open a sheet with the
+          // full list.
+          _SecondaryMusclesField(
+            primary: _primary,
+            selected: _secondary,
+            readOnly: _readOnly,
+            onChanged: (next) => setState(() {
+              _secondary
+                ..clear()
+                ..addAll(next);
+            }),
           ),
           const SizedBox(height: 12),
           DropdownButtonFormField<Equipment>(
@@ -344,11 +312,131 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
             ),
           ),
           const SizedBox(height: 12),
-          // Reps, poids, increment, repos et stratégie de progression sont
-          // désormais définis directement dans le Plan d'un template
-          // (écran d'édition d'un template, sheet "Planifier l'exo").
-          // L'exercice ne stocke plus que ses méta-données (nom, muscle,
-          // équipement, photo, machine).
+          // Progression — reps target range, increment, starting weight and
+          // strategy. These drive the next-target computation and the
+          // default values offered when the exo is added to a template.
+          Card(
+            elevation: 0,
+            color: Theme.of(context).colorScheme.surfaceContainerLow,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    const Text('Progression',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(width: 4),
+                    _InfoIconBtn(
+                      title: 'Surcharge progressive',
+                      body:
+                          "Cible reps + incrément utilisés pour calculer la "
+                          "prochaine série (Double Progression : on monte les "
+                          "reps jusqu'au max, puis +incrément kg, retour au "
+                          "min). Le RPE auto-régulé pilote le poids via "
+                          "l'e1RM courant à un RPE cible.",
+                    ),
+                  ]),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<ProgressionStrategyKind>(
+                    value: _strategy,
+                    decoration: const InputDecoration(
+                      labelText: 'Stratégie',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: ProgressionStrategyKind.doubleProgression,
+                        child: Text('Double progression'),
+                      ),
+                      DropdownMenuItem(
+                        value: ProgressionStrategyKind.rpeAutoregulated,
+                        child: Text('Auto-régulé RPE'),
+                      ),
+                    ],
+                    onChanged: _readOnly
+                        ? null
+                        : (v) => setState(() => _strategy = v!),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _repMinCtrl,
+                        enabled: !_readOnly,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Reps min',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                          helperText: 'Plancher de la fourchette',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: _repMaxCtrl,
+                        enabled: !_readOnly,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Reps max',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                          helperText: 'Atteint → +incrément',
+                        ),
+                      ),
+                    ),
+                  ]),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _incrementCtrl,
+                        enabled: !_readOnly,
+                        keyboardType:
+                            const TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Incrément (kg)',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                          helperText: 'Override du global',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: _startingWeightCtrl,
+                        enabled: !_readOnly && !_useBodyweight,
+                        keyboardType:
+                            const TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Poids départ (kg)',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                          helperText: 'Si pas d\'historique',
+                        ),
+                      ),
+                    ),
+                  ]),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _restCtrl,
+                    enabled: !_readOnly,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Repos par défaut (s) — laisser vide pour le global',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
           TextField(
             controller: _machineModelCtrl,
             enabled: !_readOnly,
@@ -403,6 +491,203 @@ class _InfoIconBtn extends StatelessWidget {
             TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('OK'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact summary tile for secondary muscles. Tapping opens a sheet with
+/// a multi-select list. Keeps the form short while still showing what's
+/// picked at a glance.
+class _SecondaryMusclesField extends StatelessWidget {
+  final MuscleGroup primary;
+  final Set<MuscleGroup> selected;
+  final bool readOnly;
+  final ValueChanged<Set<MuscleGroup>> onChanged;
+  const _SecondaryMusclesField({
+    required this.primary,
+    required this.selected,
+    required this.readOnly,
+    required this.onChanged,
+  });
+
+  String _summary() {
+    if (selected.isEmpty) return 'Aucun';
+    final names = selected.map(_muscleLabel).toList()..sort();
+    if (names.length <= 2) return names.join(', ');
+    return '${names.take(2).join(', ')} +${names.length - 2}';
+  }
+
+  Future<void> _open(BuildContext context) async {
+    final result = await showModalBottomSheet<Set<MuscleGroup>>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sheetCtx) => _SecondaryMusclesSheet(
+        primary: primary,
+        initial: selected,
+      ),
+    );
+    if (result != null) onChanged(result);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Card(
+      elevation: 0,
+      color: cs.surfaceContainerLow,
+      child: InkWell(
+        onTap: readOnly ? null : () => _open(context),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      const Text('Muscles secondaires',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                      const SizedBox(width: 4),
+                      _InfoIconBtn(
+                        title: 'Muscles secondaires',
+                        body:
+                            "Tous les autres groupes qui travaillent en plus "
+                            "du principal. Sert au calcul du volume par muscle "
+                            "(un développé couché compte aussi un peu pour "
+                            "épaules et triceps).",
+                      ),
+                    ]),
+                    const SizedBox(height: 2),
+                    Text(
+                      _summary(),
+                      style: TextStyle(
+                        color: selected.isEmpty
+                            ? cs.onSurfaceVariant
+                            : cs.onSurface,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.expand_more_rounded, color: cs.onSurfaceVariant),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SecondaryMusclesSheet extends StatefulWidget {
+  final MuscleGroup primary;
+  final Set<MuscleGroup> initial;
+  const _SecondaryMusclesSheet({
+    required this.primary,
+    required this.initial,
+  });
+  @override
+  State<_SecondaryMusclesSheet> createState() =>
+      _SecondaryMusclesSheetState();
+}
+
+class _SecondaryMusclesSheetState extends State<_SecondaryMusclesSheet> {
+  late Set<MuscleGroup> _picked;
+
+  @override
+  void initState() {
+    super.initState();
+    _picked = {...widget.initial};
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final options = MuscleGroup.values
+        .where((m) => m != widget.primary)
+        .toList();
+    return DraggableScrollableSheet(
+      initialChildSize: 0.7,
+      minChildSize: 0.4,
+      maxChildSize: 0.92,
+      expand: false,
+      builder: (_, scrollCtrl) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Text(
+                  'Muscles secondaires',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const Spacer(),
+                if (_picked.isNotEmpty)
+                  TextButton(
+                    onPressed: () => setState(_picked.clear),
+                    child: const Text('Tout désélectionner'),
+                  ),
+              ],
+            ),
+            Text(
+              'Coche tous les groupes qui travaillent en plus du principal.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: cs.onSurfaceVariant,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: ListView(
+                controller: scrollCtrl,
+                children: [
+                  for (final m in options)
+                    CheckboxListTile(
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: Text(_muscleLabel(m)),
+                      value: _picked.contains(m),
+                      onChanged: (v) => setState(() {
+                        if (v == true) {
+                          _picked.add(m);
+                        } else {
+                          _picked.remove(m);
+                        }
+                      }),
+                    ),
+                ],
+              ),
+            ),
+            SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Annuler'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () => Navigator.pop(context, _picked),
+                        child: Text(
+                          _picked.isEmpty
+                              ? 'Valider (aucun)'
+                              : 'Valider (${_picked.length})',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ],
         ),

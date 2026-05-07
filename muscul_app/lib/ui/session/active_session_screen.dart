@@ -184,6 +184,17 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
       );
     }
 
+    // Items can shrink under us (e.g. exo deletion / swap). Clamp the
+    // tracked index so the "1/N" pill and dots indicator don't read past
+    // the end of the list before the next onPageChanged fires.
+    if (_currentPage >= items.length) {
+      _currentPage = items.isEmpty ? 0 : items.length - 1;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_pageCtrl.hasClients) return;
+        _pageCtrl.jumpToPage(_currentPage);
+      });
+    }
+
     return Column(
       children: [
         _topBar(session.startedAt, items.length),
@@ -195,7 +206,8 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
             itemBuilder: (_, i) => _exercisePage(items, i, settings),
           ),
         ),
-        if (items.length > 1) _PageDots(count: items.length, current: _currentPage),
+        if (items.length > 1)
+          _PageDots(count: items.length, current: _currentPage.clamp(0, items.length - 1)),
         Container(
           decoration: BoxDecoration(
             color: Theme.of(context).colorScheme.surfaceContainerLow,
@@ -273,24 +285,26 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
                         ],
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Container(
-                      width: 1,
-                      height: 14,
-                      color: cs.outlineVariant,
-                    ),
-                    const SizedBox(width: 10),
-                    Text(
-                      '${_currentPage + 1}/$totalExos',
-                      style: TextStyle(
-                        color: cs.onSurfaceVariant,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        fontFeatures: const [
-                          FontFeature.tabularFigures()
-                        ],
+                    if (totalExos > 0) ...[
+                      const SizedBox(width: 10),
+                      Container(
+                        width: 1,
+                        height: 14,
+                        color: cs.outlineVariant,
                       ),
-                    ),
+                      const SizedBox(width: 10),
+                      Text(
+                        '${_currentPage.clamp(0, totalExos - 1) + 1}/$totalExos',
+                        style: TextStyle(
+                          color: cs.onSurfaceVariant,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          fontFeatures: const [
+                            FontFeature.tabularFigures()
+                          ],
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

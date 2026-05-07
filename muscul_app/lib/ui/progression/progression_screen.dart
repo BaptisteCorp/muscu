@@ -1734,24 +1734,9 @@ Future<void> _logBodyweight(
                           : noteCtrl.text.trim(),
                       updatedAt: DateTime.now(),
                     ));
-                    // Mirror the latest entry into UserSettings so bodyweight
-                    // exercises always show an up-to-date total.
-                    final all = await ref
-                        .read(bodyweightRepositoryProvider)
-                        .watchAll()
-                        .first;
-                    if (all.isNotEmpty) {
-                      final latest = all.last;
-                      final settings = await ref
-                          .read(settingsRepositoryProvider)
-                          .get();
-                      if (settings.userBodyweightKg != latest.weightKg) {
-                        await ref.read(settingsRepositoryProvider).save(
-                              settings.copyWith(
-                                  userBodyweightKg: latest.weightKg),
-                            );
-                      }
-                    }
+                    // The bodyweightSettingsSyncProvider listener mirrors
+                    // the latest entry into UserSettings — no inline save
+                    // needed here.
                     if (sheetCtx.mounted) {
                       Navigator.pop(sheetCtx, true);
                     }

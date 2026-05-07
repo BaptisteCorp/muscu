@@ -6,6 +6,7 @@ import '../../core/config/supabase_config.dart';
 import '../../core/providers.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/auth/auth_service.dart';
+import '../../domain/models/bodyweight_entry.dart';
 import '../../domain/models/session.dart';
 import '../../domain/models/workout_template.dart';
 import '../session/start_session_controller.dart';
@@ -470,10 +471,14 @@ class _SettingsSheet extends ConsumerWidget {
             ListTile(
               title: const Text('Mon poids (kg)'),
               subtitle: const Text(
-                  'Utilisé pour les exos au poids du corps'),
+                  "Mis à jour à chaque saisie dans Progression > Poids"),
               trailing: SizedBox(
                 width: 96,
                 child: TextFormField(
+                  // Key forces a rebuild of the field whenever the synced
+                  // value changes — otherwise the local controller state
+                  // sticks to its first initialValue.
+                  key: ValueKey('bw_${s.userBodyweightKg ?? ""}'),
                   initialValue: s.userBodyweightKg?.toStringAsFixed(1) ?? '',
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
@@ -482,12 +487,28 @@ class _SettingsSheet extends ConsumerWidget {
                       suffixText: 'kg', isDense: true),
                   onFieldSubmitted: (v) async {
                     final parsed = double.tryParse(v.replaceAll(',', '.'));
-                    await ref.read(settingsRepositoryProvider).save(
-                          s.copyWith(
-                            userBodyweightKg: parsed,
-                            clearUserBodyweightKg: parsed == null,
-                          ),
-                        );
+                    if (parsed != null && parsed > 0) {
+                      // Logging here too keeps Progression > Poids and
+                      // Settings in sync — the bodyweight entries stream
+                      // is the single source of truth.
+                      final today = DateTime.now();
+                      await ref.read(bodyweightRepositoryProvider).upsert(
+                            BodyweightEntry(
+                              date: BodyweightEntry.formatDate(today),
+                              weightKg: parsed,
+                              updatedAt: today,
+                            ),
+                          );
+                    } else {
+                      // User cleared the field → drop the cached weight
+                      // (does not touch logged history).
+                      await ref.read(settingsRepositoryProvider).save(
+                            s.copyWith(
+                              userBodyweightKg: null,
+                              clearUserBodyweightKg: true,
+                            ),
+                          );
+                    }
                   },
                 ),
               ),
@@ -523,7 +544,7 @@ class _AuthPill extends ConsumerWidget {
         borderRadius: BorderRadius.circular(AppTokens.radiusXL),
         onTap: () {
           if (loggedIn) {
-            _showLoggedInSheet(context, ref, user.email);
+            _showLoggedInSheet(context, ref, user?.email);
           } else {
             context.push('/login');
           }

@@ -409,6 +409,10 @@ class _SetIndexBadge extends StatelessWidget {
   }
 }
 
+/// Vertical stepper: label on top, big tabular value in the middle, +/-
+/// buttons at the bottom side-by-side. Vertical because three steppers
+/// share the row width — a horizontal layout (button / value / button)
+/// squeezes the number to nothing on phone-width screens.
 class _BigStepper extends StatelessWidget {
   final String label;
   final String value;
@@ -432,63 +436,68 @@ class _BigStepper extends StatelessWidget {
         border: Border.all(color: cs.outline),
         borderRadius: BorderRadius.circular(AppTokens.radiusM),
       ),
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Padding(
-            padding: const EdgeInsets.only(top: 2),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  label.toUpperCase(),
-                  style: TextStyle(
-                    color: cs.onSurfaceVariant,
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 1.0,
-                  ),
-                ),
-                if (onInfo != null) ...[
-                  const SizedBox(width: 3),
-                  GestureDetector(
-                    onTap: onInfo,
-                    child: Icon(
-                      Icons.info_outline,
-                      size: 13,
-                      color: cs.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
           Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              _StepperButton(icon: Icons.remove_rounded, onPressed: onMinus),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 2),
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.center,
-                    child: Text(
-                      value,
-                      maxLines: 1,
-                      style: TextStyle(
-                        fontSize: 26,
-                        height: 1.1,
-                        fontWeight: FontWeight.w900,
-                        color: cs.onSurface,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                  ),
+              Text(
+                label.toUpperCase(),
+                style: TextStyle(
+                  color: cs.onSurfaceVariant,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.0,
                 ),
               ),
-              _StepperButton(icon: Icons.add_rounded, onPressed: onPlus),
+              if (onInfo != null) ...[
+                const SizedBox(width: 3),
+                GestureDetector(
+                  onTap: onInfo,
+                  child: Icon(
+                    Icons.info_outline,
+                    size: 13,
+                    color: cs.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 4),
+          // Hero value — fixed height so all 3 columns line up.
+          SizedBox(
+            height: 36,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.center,
+              child: Text(
+                value,
+                maxLines: 1,
+                style: TextStyle(
+                  fontSize: 30,
+                  height: 1.0,
+                  fontWeight: FontWeight.w900,
+                  color: cs.onSurface,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: _StepperButton(
+                    icon: Icons.remove_rounded, onPressed: onMinus),
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: _StepperButton(
+                    icon: Icons.add_rounded, onPressed: onPlus),
+              ),
             ],
           ),
         ],
@@ -508,10 +517,8 @@ class _StepperButton extends StatelessWidget {
       onTap: onPressed,
       borderRadius: BorderRadius.circular(AppTokens.radiusS),
       child: Container(
-        width: 44,
-        height: 44,
+        height: 40,
         alignment: Alignment.center,
-        margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
         decoration: BoxDecoration(
           color: cs.surfaceContainerHigh,
           borderRadius: BorderRadius.circular(AppTokens.radiusS),

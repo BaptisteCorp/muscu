@@ -115,10 +115,35 @@ class _RestTimerState extends State<RestTimer>
     _pulseCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 900),
-    )..repeat(reverse: true);
+    );
+    _syncPulseAnimation();
   }
 
-  void _onChange() => setState(() {});
+  void _onChange() {
+    setState(() {});
+    _syncPulseAnimation();
+  }
+
+  /// Pulse only when the timer is in a state that needs visual urgency:
+  /// final 10 seconds, or just-finished "GO!" state. Otherwise stop the
+  /// animation entirely so it doesn't burn battery during long rests or
+  /// when idle.
+  void _syncPulseAnimation() {
+    final c = widget.controller;
+    final isDone = c.total > 0 && c.remaining == 0;
+    final isUrgent = c.remaining > 0 && c.remaining <= 10;
+    final shouldPulse = isUrgent || (isDone && c.justFinished);
+    if (shouldPulse) {
+      if (!_pulseCtrl.isAnimating) {
+        _pulseCtrl.repeat(reverse: true);
+      }
+    } else {
+      if (_pulseCtrl.isAnimating) {
+        _pulseCtrl.stop();
+        _pulseCtrl.value = 0;
+      }
+    }
+  }
 
   @override
   void dispose() {

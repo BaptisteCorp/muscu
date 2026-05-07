@@ -134,3 +134,29 @@ final muscleWeeklyTrendProvider =
       .watch(sessionRepositoryProvider)
       .watchMuscleWeeklyTrend(weeks: weeks);
 });
+
+/// Side-effect provider that keeps `UserSettings.userBodyweightKg` in
+/// lockstep with the latest entry in the bodyweight log. The Progression
+/// tab is the source of truth: any add / edit / delete there updates the
+/// settings cache so bodyweight exercises always read a fresh value.
+///
+/// When the entries list is empty (e.g. first launch, or all entries
+/// deleted) we leave the existing settings value untouched — the user may
+/// have set their weight manually in Settings without ever logging.
+///
+/// Eagerly watched once from `MusculApp.build` so the invariant holds for
+/// the entire app lifetime, regardless of which screen is on top.
+final bodyweightSettingsSyncProvider = Provider<void>((ref) {
+  ref.listen<AsyncValue<List<BodyweightEntry>>>(
+    bodyweightEntriesProvider,
+    (previous, next) async {
+      final entries = next.valueOrNull;
+      if (entries == null || entries.isEmpty) return;
+      final latestKg = entries.last.weightKg;
+      final repo = ref.read(settingsRepositoryProvider);
+      final settings = await repo.get();
+      if (settings.userBodyweightKg == latestKg) return;
+      await repo.save(settings.copyWith(userBodyweightKg: latestKg));
+    },
+  );
+});

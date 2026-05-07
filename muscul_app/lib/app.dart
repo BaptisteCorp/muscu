@@ -70,6 +70,10 @@ class _MusculAppState extends ConsumerState<MusculApp>
   Widget build(BuildContext context) {
     final router = ref.watch(routerProvider);
     final settingsAsync = ref.watch(settingsStreamProvider);
+    // Side-effect: keep settings.userBodyweightKg synced to the latest
+    // bodyweight entry. Eagerly watched here so the invariant holds for
+    // the entire app lifetime, regardless of which screen is on top.
+    ref.watch(bodyweightSettingsSyncProvider);
     final mode = settingsAsync.maybeWhen(
       data: (s) => switch (s.themeMode) {
         AppThemeMode.system => ThemeMode.system,
