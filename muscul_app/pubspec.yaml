@@ -1,0 +1,67 @@
+name: muscul_app
+description: Suivi de séances de musculation, local-first, Android.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+  flutter: '>=3.19.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State management
+  flutter_riverpod: ^2.5.1
+  riverpod_annotation: ^2.3.5
+
+  # Navigation
+  go_router: ^14.0.2
+
+  # Persistance locale
+  drift: ^2.18.0
+  sqlite3_flutter_libs: ^0.5.20
+  path_provider: ^2.1.3
+  path: ^1.9.0
+
+  # Modèles immuables
+  freezed_annotation: ^2.4.1
+  json_annotation: ^4.9.0
+
+  # IDs et photos
+  uuid: ^4.4.0
+  image_picker: ^1.1.1
+
+  # Charts
+  fl_chart: ^0.68.0
+
+  # Backend cloud (auth + sync)
+  # Pinned to a version whose transitive app_links matches Flutter 3.24 / AGP 8.1.
+  supabase_flutter: 2.5.6
+
+  # Utilitaires
+  intl: ^0.19.0
+  collection: ^1.18.0
+
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+
+  build_runner: ^2.4.10
+  drift_dev: ^2.18.0
+  freezed: ^2.5.2
+  json_serializable: ^6.8.0
+  riverpod_generator: ^2.4.0
+  custom_lint: ^0.6.4
+  riverpod_lint: ^2.3.10
+
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icons/
