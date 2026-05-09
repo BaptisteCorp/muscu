@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/providers.dart';
+import '../../core/utils/formatters.dart';
 import '../../data/sync/sync_service.dart';
 import '../../domain/models/session.dart';
 import '../../domain/models/workout_template.dart';
@@ -136,7 +137,7 @@ class _HeatmapSectionState extends State<_HeatmapSection> {
                     leading: const Icon(Icons.fitness_center),
                     title: Text(_shortNameFor(s)),
                     subtitle: Text(
-                      'Démarrée à ${_timeOnly(s.startedAt)} • '
+                      'Démarrée à ${fmtTime(s.startedAt)} • '
                       '${s.endedAt!.difference(s.startedAt).inMinutes} min',
                     ),
                     trailing: const Icon(Icons.chevron_right),
@@ -367,6 +368,12 @@ class _HistoryTile extends ConsumerWidget {
 
   Future<void> _doDelete(WidgetRef ref) async {
     await ref.read(sessionRepositoryProvider).softDeleteSession(session.id);
+    // Push this single deletion synchronously so it can't be lost if the
+    // user reinstalls before the next batched sync runs (and so the
+    // deletion isn't blocked by an unrelated failure on another table).
+    try {
+      await ref.read(syncServiceProvider).pushSession(session.id);
+    } catch (_) {/* best-effort; the periodic sync will retry */}
     unawaited(ref.read(syncServiceProvider).sync());
   }
 
@@ -393,7 +400,7 @@ class _HistoryTile extends ConsumerWidget {
       child: Card(
         child: ListTile(
           leading: const Icon(Icons.history),
-          title: Text(_dateLabel(dt)),
+          title: Text(fmtDateTime(dt)),
           subtitle: Text('Durée: ${duration.inMinutes} min'),
           trailing: Row(mainAxisSize: MainAxisSize.min, children: [
             IconButton(
@@ -452,7 +459,7 @@ class _SessionSummarySheet extends ConsumerWidget {
             controller: scrollCtrl,
             padding: const EdgeInsets.all(16),
             children: [
-              Text('Séance du ${_dateLabel(dt)}',
+              Text('Séance du ${fmtDateTime(dt)}',
                   style: Theme.of(context).textTheme.titleLarge),
               const SizedBox(height: 8),
               Wrap(spacing: 8, runSpacing: 8, children: [
@@ -546,7 +553,7 @@ class _ExerciseSummaryCard extends ConsumerWidget {
                   padding: const EdgeInsets.symmetric(vertical: 2),
                   child: Text(
                     'Série ${i + 1} : ${working[i].reps} × '
-                    '${_fmtKg(working[i].weightKg)}kg'
+                    '${fmtKg(working[i].weightKg)}kg'
                     '${working[i].rpe != null ? '   RPE ${working[i].rpe}' : ''}',
                     style: const TextStyle(
                       fontFeatures: [FontFeature.tabularFigures()],
@@ -559,21 +566,7 @@ class _ExerciseSummaryCard extends ConsumerWidget {
     );
   }
 
-  String _fmtKg(double v) {
-    if (v == v.roundToDouble()) return v.toInt().toString();
-    return v.toStringAsFixed(1);
-  }
 }
-
-String _dateLabel(DateTime d) {
-  return '${d.day.toString().padLeft(2, '0')}/'
-      '${d.month.toString().padLeft(2, '0')}/${d.year} '
-      '${d.hour.toString().padLeft(2, '0')}:'
-      '${d.minute.toString().padLeft(2, '0')}';
-}
-
-String _timeOnly(DateTime d) =>
-    '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
 
 String _dayHeader(DateTime d) {
   const weekdays = [
@@ -832,5 +825,5 @@ String _formatDate(DateTime d) {
     'Dimanche'
   ][d.weekday - 1];
   return '$weekday ${d.day} ${_monthName(d.month)} '
-      '${d.year} ${_timeOnly(d)}';
+      '${d.year} ${fmtTime(d)}';
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/formatters.dart';
 import '../../domain/models/session.dart';
 
 enum SetRowState { completed, active, pending, skipped }
@@ -66,7 +67,7 @@ class SetRow extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final weightStr = bodyweightLabel != null
         ? bodyweightLabel!
-        : '${_fmt(entry!.weightKg)} kg';
+        : '${fmtKg(entry!.weightKg)} kg';
     final rpeText = entry!.rpe != null
         ? '${useRir ? "RIR" : "RPE"} ${useRir ? (10 - entry!.rpe!) : entry!.rpe}'
         : null;
@@ -179,7 +180,7 @@ class SetRow extends StatelessWidget {
               TextSpan(
                 children: [
                   TextSpan(
-                    text: '$reps × ${_fmt(weightKg)} kg',
+                    text: '$reps × ${fmtKg(weightKg)} kg',
                     style: TextStyle(
                       color: muted,
                       fontFeatures: const [FontFeature.tabularFigures()],
@@ -255,7 +256,7 @@ class SetRow extends StatelessWidget {
               Expanded(
                 child: _BigStepper(
                   label: bodyweightLabel != null ? '+kg' : 'kg',
-                  value: _fmt(weightKg),
+                  value: fmtKg(weightKg),
                   onMinus: () => onWeightChanged(
                     bodyweightLabel != null
                         ? (weightKg - incrementKg)
@@ -341,10 +342,6 @@ class SetRow extends StatelessWidget {
     );
   }
 
-  String _fmt(double v) {
-    if (v == v.roundToDouble()) return v.toInt().toString();
-    return v.toStringAsFixed(1);
-  }
 }
 
 class _SetIndexBadge extends StatelessWidget {

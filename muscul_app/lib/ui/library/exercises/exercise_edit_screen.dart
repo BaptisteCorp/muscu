@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/providers.dart';
+import '../../../core/utils/formatters.dart';
 import '../../../domain/models/enums.dart';
 import '../../../domain/models/exercise.dart';
 
@@ -23,6 +24,7 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
   Exercise? _initial;
   bool _loading = true;
   bool _showErrors = false;
+  bool _dirty = false;
 
   // form fields
   final _nameCtrl = TextEditingController();
@@ -34,41 +36,60 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
   final _startingWeightCtrl = TextEditingController(text: '20');
   final _incrementCtrl = TextEditingController();
   final _restCtrl = TextEditingController();
+  final _rpeThresholdCtrl = TextEditingController();
+
+  late final List<TextEditingController> _allCtrls = [
+    _nameCtrl,
+    _notesCtrl,
+    _machineModelCtrl,
+    _machineSettingsCtrl,
+    _repMinCtrl,
+    _repMaxCtrl,
+    _startingWeightCtrl,
+    _incrementCtrl,
+    _restCtrl,
+    _rpeThresholdCtrl,
+  ];
 
   MuscleGroup _primary = MuscleGroup.chest;
   final Set<MuscleGroup> _secondary = {};
   Equipment _equipment = Equipment.barbell;
-  ProgressionStrategyKind _strategy = ProgressionStrategyKind.doubleProgression;
+  bool _progressiveOverloadEnabled = true;
+  ProgressionPriority _priority = ProgressionPriority.repsFirst;
   bool _useBodyweight = false;
   String? _photoPath;
+
+  void _markDirty() {
+    if (!_dirty) _dirty = true;
+  }
 
   @override
   void initState() {
     super.initState();
+    for (final c in _allCtrls) {
+      c.addListener(_markDirty);
+    }
     _load();
   }
 
   @override
   void dispose() {
-    _nameCtrl.dispose();
-    _notesCtrl.dispose();
-    _machineModelCtrl.dispose();
-    _machineSettingsCtrl.dispose();
-    _repMinCtrl.dispose();
-    _repMaxCtrl.dispose();
-    _startingWeightCtrl.dispose();
-    _incrementCtrl.dispose();
-    _restCtrl.dispose();
+    for (final c in _allCtrls) {
+      c.removeListener(_markDirty);
+      c.dispose();
+    }
     super.dispose();
   }
 
   Future<void> _load() async {
     final id = widget.exerciseId;
-    final settings =
-        await ref.read(settingsRepositoryProvider).watch().first;
+    // .get() returns the singleton settings row directly; using .watch().first
+    // would couple loading to a stream emission, which makes widget tests
+    // flake when the fake clock doesn't drive real I/O timers.
+    final settings = await ref.read(settingsRepositoryProvider).get();
     final globalIncrement = settings.defaultIncrementKg;
     if (id == null) {
-      _incrementCtrl.text = _fmtKg(globalIncrement);
+      _incrementCtrl.text = fmtKg(globalIncrement);
       setState(() => _loading = false);
       return;
     }
@@ -83,36 +104,97 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
       _repMaxCtrl.text = ex.targetRepRangeMax.toString();
       _startingWeightCtrl.text = ex.startingWeightKg.toString();
       _incrementCtrl.text =
-          _fmtKg(ex.defaultIncrementKg ?? globalIncrement);
+          fmtKg(ex.defaultIncrementKg ?? globalIncrement);
       _restCtrl.text = ex.defaultRestSeconds?.toString() ?? '';
       _primary = ex.primaryMuscle;
       _secondary
         ..clear()
         ..addAll(ex.secondaryMuscles);
       _equipment = ex.equipment;
-      _strategy = ex.progressionStrategy;
+      _progressiveOverloadEnabled = ex.progressiveOverloadEnabled;
+      _priority = ex.progressionPriority;
+      _rpeThresholdCtrl.text = ex.minimumRpeThreshold?.toString() ?? '';
       _useBodyweight = ex.useBodyweight;
       _photoPath = ex.photoPath;
     }
+    // Listeners flipped _dirty during initial population — reset.
+    _dirty = false;
     setState(() => _loading = false);
   }
 
-  String _fmtKg(double v) {
-    if (v == v.roundToDouble()) return v.toInt().toString();
-    return v.toString();
+  /// Identité (nom, muscles, équipement, photo, notes, machine) des exos
+  /// par défaut : non modifiable. Les paramètres d'entraînement
+  /// (surcharge, reps, poids, repos, RPE…) restent éditables pour tous.
+  bool get _identityReadOnly => _initial != null && !_initial!.isCustom;
+
+  // --- Validators (live, returnent null si OK, sinon le message d'erreur) ---
+  String? _validatePositiveInt(String text, {int min = 1}) {
+    if (text.isEmpty) return null;
+    final v = int.tryParse(text);
+    if (v == null) return 'Nombre attendu';
+    if (v < min) return '≥ $min attendu';
+    return null;
   }
 
-  bool get _readOnly => _initial != null && !_initial!.isCustom;
+  String? _validatePositiveDouble(String text) {
+    if (text.isEmpty) return null;
+    final v = double.tryParse(text);
+    if (v == null) return 'Nombre attendu';
+    if (v < 0) return 'Doit être ≥ 0';
+    return null;
+  }
+
+  String? _validateRepMax() {
+    final err = _validatePositiveInt(_repMaxCtrl.text);
+    if (err != null) return err;
+    final mn = int.tryParse(_repMinCtrl.text);
+    final mx = int.tryParse(_repMaxCtrl.text);
+    if (mn != null && mx != null && mx <= mn) return '> Reps min';
+    return null;
+  }
+
+  String? _validateRpe() {
+    if (_rpeThresholdCtrl.text.isEmpty) return null;
+    final v = int.tryParse(_rpeThresholdCtrl.text);
+    if (v == null) return 'Nombre attendu';
+    if (v < 1 || v > 10) return 'Entre 1 et 10';
+    return null;
+  }
+
+  bool get _hasFormErrors {
+    return _validatePositiveInt(_repMinCtrl.text) != null ||
+        _validateRepMax() != null ||
+        _validatePositiveDouble(_incrementCtrl.text) != null ||
+        _validatePositiveDouble(_startingWeightCtrl.text) != null ||
+        _validatePositiveInt(_restCtrl.text) != null ||
+        _validateRpe() != null;
+  }
+
+  Future<bool> _persist() async {
+    final name = _nameCtrl.text.trim();
+    if (name.isEmpty || _hasFormErrors) return false;
+    await _writeExercise();
+    _dirty = false;
+    return true;
+  }
 
   Future<void> _save() async {
     final name = _nameCtrl.text.trim();
-    if (name.isEmpty) {
+    if (name.isEmpty || _hasFormErrors) {
       setState(() => _showErrors = true);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Donne un nom à l'exercice")),
+        const SnackBar(
+            content: Text('Corrige les champs en rouge avant d\'enregistrer')),
       );
       return;
     }
+    await _writeExercise();
+    _dirty = false;
+    if (mounted) context.pop();
+  }
+
+  Future<void> _writeExercise() async {
+    final name = _nameCtrl.text.trim();
     final id = _initial?.id ?? _uuid.v4();
     final repMin = int.tryParse(_repMinCtrl.text) ?? 8;
     final repMax = int.tryParse(_repMaxCtrl.text) ?? 12;
@@ -120,18 +202,22 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
     final inc = double.tryParse(_incrementCtrl.text);
     final restRaw = _restCtrl.text.trim();
     final rest = restRaw.isEmpty ? null : int.tryParse(restRaw);
+    final rpeRaw = _rpeThresholdCtrl.text.trim();
+    final rpeThreshold = rpeRaw.isEmpty ? null : int.tryParse(rpeRaw);
     final now = DateTime.now();
     final exercise = Exercise(
       id: id,
       name: name,
       // Category is derived from the primary muscle — push/pull/legs are
       // session-level concepts, not exercise-level.
-      category: _categoryFromMuscle(_primary),
+      category: categoryFromMuscle(_primary),
       primaryMuscle: _primary,
       secondaryMuscles: _secondary.toList(),
       equipment: _equipment,
-      isCustom: true,
-      progressionStrategy: _strategy,
+      isCustom: _initial?.isCustom ?? true,
+      progressiveOverloadEnabled: _progressiveOverloadEnabled,
+      progressionPriority: _priority,
+      minimumRpeThreshold: rpeThreshold,
       targetRepRangeMin: repMin,
       targetRepRangeMax: repMax > repMin ? repMax : repMin + 1,
       startingWeightKg: startWeight,
@@ -150,14 +236,52 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
       syncStatus: SyncStatus.pending,
     );
     await ref.read(exerciseRepositoryProvider).upsert(exercise);
-    if (mounted) context.pop();
+  }
+
+  /// Called when the user navigates back. Auto-save if valid; otherwise ask
+  /// whether to discard.
+  Future<bool> _handlePop() async {
+    if (!_dirty) return true;
+    final canSave = _nameCtrl.text.trim().isNotEmpty && !_hasFormErrors;
+    if (canSave) {
+      await _persist();
+      return true;
+    }
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Annuler les modifications ?'),
+        content: const Text(
+            'L\'exercice ne peut pas être enregistré (champs invalides ou nom manquant). '
+            'Voulez-vous abandonner les modifications ?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Continuer'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Abandonner'),
+          ),
+        ],
+      ),
+    );
+    return discard == true;
   }
 
   Future<void> _capturePhoto({required ImageSource source}) async {
     final id = _initial?.id ?? _uuid.v4();
-    final path =
+    final result =
         await ref.read(photoStorageProvider).capture(id, source: source);
-    if (path != null) setState(() => _photoPath = path);
+    if (!mounted) return;
+    if (result.path != null) {
+      _markDirty();
+      setState(() => _photoPath = result.path);
+    } else if (result.error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.error!)),
+      );
+    }
   }
 
   Future<void> _delete() async {
@@ -189,7 +313,14 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
     if (_loading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        final allow = await _handlePop();
+        if (allow && mounted) context.pop();
+      },
+      child: Scaffold(
       appBar: AppBar(
         title: Text(_initial == null ? 'Nouvel exercice' : 'Exercice'),
         actions: [
@@ -197,21 +328,20 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
             IconButton(
                 icon: const Icon(Icons.delete_outline), onPressed: _delete),
           IconButton(
-              icon: const Icon(Icons.check),
-              onPressed: _readOnly ? null : _save),
+              icon: const Icon(Icons.check), onPressed: _save),
         ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          if (_readOnly)
+          if (_identityReadOnly)
             const Card(
               color: Color(0xFFFFF8E1),
               child: ListTile(
                 leading: Icon(Icons.lock_outline),
                 title: Text('Exercice par défaut'),
                 subtitle: Text(
-                    'Dupliquez-le depuis le menu pour pouvoir le modifier.'),
+                    'Tu peux ajuster la progression et le repos. Pour modifier le nom, les muscles ou l\'équipement, duplique-le depuis le menu.'),
               ),
             ),
           _PhotoBox(
@@ -222,7 +352,7 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
           const SizedBox(height: 12),
           TextField(
             controller: _nameCtrl,
-            enabled: !_readOnly,
+            enabled: !_identityReadOnly,
             onChanged: (_) {
               if (_showErrors) setState(() {});
             },
@@ -250,10 +380,14 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
             ),
             items: [
               for (final m in MuscleGroup.values)
-                DropdownMenuItem(value: m, child: Text(_muscleLabel(m))),
+                DropdownMenuItem(value: m, child: Text(muscleLabel(m))),
             ],
-            onChanged:
-                _readOnly ? null : (v) => setState(() => _primary = v!),
+            onChanged: _identityReadOnly
+                ? null
+                : (v) {
+                    _markDirty();
+                    setState(() => _primary = v!);
+                  },
           ),
           const SizedBox(height: 12),
           // Secondary muscles — collapsed multi-select to avoid covering
@@ -262,12 +396,15 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
           _SecondaryMusclesField(
             primary: _primary,
             selected: _secondary,
-            readOnly: _readOnly,
-            onChanged: (next) => setState(() {
-              _secondary
-                ..clear()
-                ..addAll(next);
-            }),
+            readOnly: _identityReadOnly,
+            onChanged: (next) {
+              _markDirty();
+              setState(() {
+                _secondary
+                  ..clear()
+                  ..addAll(next);
+              });
+            },
           ),
           const SizedBox(height: 12),
           DropdownButtonFormField<Equipment>(
@@ -278,10 +415,14 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
             ),
             items: [
               for (final e in Equipment.values)
-                DropdownMenuItem(value: e, child: Text(e.name)),
+                DropdownMenuItem(value: e, child: Text(e.label)),
             ],
-            onChanged:
-                _readOnly ? null : (v) => setState(() => _equipment = v!),
+            onChanged: _identityReadOnly
+                ? null
+                : (v) {
+                    _markDirty();
+                    setState(() => _equipment = v!);
+                  },
           ),
           const SizedBox(height: 12),
           Card(
@@ -289,9 +430,12 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
             color: Theme.of(context).colorScheme.surfaceContainerLow,
             child: SwitchListTile(
               value: _useBodyweight,
-              onChanged: _readOnly
+              onChanged: _identityReadOnly
                   ? null
-                  : (v) => setState(() => _useBodyweight = v),
+                  : (v) {
+                      _markDirty();
+                      setState(() => _useBodyweight = v);
+                    },
               title: Row(children: [
                 const Text('Au poids du corps'),
                 const SizedBox(width: 4),
@@ -304,8 +448,6 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
                       "aussi le poids total (corps + lest) à côté.",
                 ),
               ]),
-              subtitle: const Text(
-                  'Tractions, dips… le poids = lest (+/-)'),
               dense: true,
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 12),
@@ -330,47 +472,116 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
                     _InfoIconBtn(
                       title: 'Surcharge progressive',
                       body:
-                          "Cible reps + incrément utilisés pour calculer la "
-                          "prochaine série (Double Progression : on monte les "
-                          "reps jusqu'au max, puis +incrément kg, retour au "
-                          "min). Le RPE auto-régulé pilote le poids via "
-                          "l'e1RM courant à un RPE cible.",
+                          "On garde les mêmes valeurs ou on progresse selon "
+                          "la priorité choisie : reps d'abord (on monte les "
+                          "reps jusqu'au max, puis +incrément kg et retour au "
+                          "min) ou poids d'abord (+incrément kg à chaque "
+                          "succès, reps stables).\n\n"
+                          "La progression n'a lieu que si toutes les séries "
+                          "prévues sont terminées avec au moins le min de "
+                          "reps, et que le RPE de la séance ne dépasse pas "
+                          "le seuil (si défini).",
                     ),
                   ]),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<ProgressionStrategyKind>(
-                    value: _strategy,
-                    decoration: const InputDecoration(
-                      labelText: 'Stratégie',
-                      border: OutlineInputBorder(),
+                  const SizedBox(height: 4),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: Row(children: [
+                      const Flexible(
+                        child: Text('Surcharge progressive activée'),
+                      ),
+                      const SizedBox(width: 4),
+                      _InfoIconBtn(
+                        title: 'Surcharge progressive',
+                        body:
+                            'Active la progression automatique des reps ou du poids '
+                            'à chaque séance réussie.\n\n'
+                            'Si désactivée, la séance suivante reproduit '
+                            'exactement les valeurs de la dernière fois.',
+                      ),
+                    ]),
+                    value: _progressiveOverloadEnabled,
+                    onChanged: (v) {
+                      _markDirty();
+                      setState(() => _progressiveOverloadEnabled = v);
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<ProgressionPriority>(
+                    value: _priority,
+                    decoration: InputDecoration(
+                      labelText: 'Ordre de progression',
+                      border: const OutlineInputBorder(),
                       isDense: true,
+                      suffixIcon: _InfoIconBtn(
+                        title: 'Ordre de progression',
+                        body:
+                            "Reps puis poids : on monte les reps jusqu'au max, "
+                            "puis +incrément kg et retour au min de reps.\n\n"
+                            "Poids puis reps : on monte le poids à chaque "
+                            "succès en gardant les reps identiques.",
+                      ),
                     ),
                     items: const [
                       DropdownMenuItem(
-                        value: ProgressionStrategyKind.doubleProgression,
-                        child: Text('Double progression'),
+                        value: ProgressionPriority.repsFirst,
+                        child: Text('Reps puis poids'),
                       ),
                       DropdownMenuItem(
-                        value: ProgressionStrategyKind.rpeAutoregulated,
-                        child: Text('Auto-régulé RPE'),
+                        value: ProgressionPriority.weightFirst,
+                        child: Text('Poids puis reps'),
                       ),
                     ],
-                    onChanged: _readOnly
+                    onChanged: !_progressiveOverloadEnabled
                         ? null
-                        : (v) => setState(() => _strategy = v!),
+                        : (v) {
+                            _markDirty();
+                            setState(() => _priority = v!);
+                          },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _rpeThresholdCtrl,
+                    enabled: _progressiveOverloadEnabled,
+                    keyboardType: TextInputType.number,
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(
+                      labelText: 'RPE max pour valider (optionnel)',
+                      border: const OutlineInputBorder(),
+                      isDense: true,
+                      errorText: _validateRpe(),
+                      suffixIcon: _InfoIconBtn(
+                        title: 'RPE max pour valider',
+                        body:
+                            "RPE max autorisé en fin de séance pour valider "
+                            "la progression. Au-delà, on garde les mêmes "
+                            "valeurs la fois suivante.\n\n"
+                            "Ex. 9 → si tu finis à RPE 10, pas de progression.\n\n"
+                            "Vide = pas de contrainte.\n"
+                            "Aucun RPE renseigné = considéré validé.",
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 12),
                   Row(children: [
                     Expanded(
                       child: TextField(
                         controller: _repMinCtrl,
-                        enabled: !_readOnly,
                         keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
+                        onChanged: (_) => setState(() {}),
+                        decoration: InputDecoration(
                           labelText: 'Reps min',
-                          border: OutlineInputBorder(),
+                          border: const OutlineInputBorder(),
                           isDense: true,
-                          helperText: 'Plancher de la fourchette',
+                          errorText: _validatePositiveInt(_repMinCtrl.text),
+                          suffixIcon: _InfoIconBtn(
+                            title: 'Reps min',
+                            body:
+                                'Plancher de la fourchette de répétitions. '
+                                'En mode "Reps puis poids", on retombe à '
+                                'cette valeur après une augmentation de poids.',
+                          ),
                         ),
                       ),
                     ),
@@ -378,13 +589,21 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
                     Expanded(
                       child: TextField(
                         controller: _repMaxCtrl,
-                        enabled: !_readOnly,
                         keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
+                        onChanged: (_) => setState(() {}),
+                        decoration: InputDecoration(
                           labelText: 'Reps max',
-                          border: OutlineInputBorder(),
+                          border: const OutlineInputBorder(),
                           isDense: true,
-                          helperText: 'Atteint → +incrément',
+                          errorText: _validateRepMax(),
+                          suffixIcon: _InfoIconBtn(
+                            title: 'Reps max',
+                            body:
+                                'Plafond de la fourchette. Quand on l\'atteint '
+                                'sur toutes les séries (en mode reps d\'abord), '
+                                'la séance suivante ajoute l\'incrément kg et '
+                                'repart du min.',
+                          ),
                         ),
                       ),
                     ),
@@ -394,14 +613,22 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
                     Expanded(
                       child: TextField(
                         controller: _incrementCtrl,
-                        enabled: !_readOnly,
                         keyboardType:
                             const TextInputType.numberWithOptions(decimal: true),
-                        decoration: const InputDecoration(
+                        onChanged: (_) => setState(() {}),
+                        decoration: InputDecoration(
                           labelText: 'Incrément (kg)',
-                          border: OutlineInputBorder(),
+                          border: const OutlineInputBorder(),
                           isDense: true,
-                          helperText: 'Override du global',
+                          errorText:
+                              _validatePositiveDouble(_incrementCtrl.text),
+                          suffixIcon: _InfoIconBtn(
+                            title: 'Incrément',
+                            body:
+                                'Combien de kg on ajoute à chaque progression '
+                                'de poids pour cet exercice. Override la '
+                                'valeur globale des Réglages.',
+                          ),
                         ),
                       ),
                     ),
@@ -409,14 +636,22 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
                     Expanded(
                       child: TextField(
                         controller: _startingWeightCtrl,
-                        enabled: !_readOnly && !_useBodyweight,
+                        enabled: !_useBodyweight,
                         keyboardType:
                             const TextInputType.numberWithOptions(decimal: true),
-                        decoration: const InputDecoration(
+                        onChanged: (_) => setState(() {}),
+                        decoration: InputDecoration(
                           labelText: 'Poids départ (kg)',
-                          border: OutlineInputBorder(),
+                          border: const OutlineInputBorder(),
                           isDense: true,
-                          helperText: 'Si pas d\'historique',
+                          errorText: _validatePositiveDouble(
+                              _startingWeightCtrl.text),
+                          suffixIcon: _InfoIconBtn(
+                            title: 'Poids de départ',
+                            body:
+                                "Charge proposée pour la toute première "
+                                "séance, quand il n'y a pas encore d'historique.",
+                          ),
                         ),
                       ),
                     ),
@@ -424,12 +659,20 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
                   const SizedBox(height: 12),
                   TextField(
                     controller: _restCtrl,
-                    enabled: !_readOnly,
                     keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Repos par défaut (s) — laisser vide pour le global',
-                      border: OutlineInputBorder(),
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(
+                      labelText: 'Repos par défaut (s)',
+                      border: const OutlineInputBorder(),
                       isDense: true,
+                      errorText: _validatePositiveInt(_restCtrl.text),
+                      suffixIcon: _InfoIconBtn(
+                        title: 'Repos par défaut',
+                        body:
+                            'Durée de repos préremplie entre les séries pour '
+                            'cet exercice. Laisser vide pour utiliser le repos '
+                            'global défini dans les Réglages.',
+                      ),
                     ),
                   ),
                 ],
@@ -439,7 +682,7 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
           const SizedBox(height: 12),
           TextField(
             controller: _machineModelCtrl,
-            enabled: !_readOnly,
+            enabled: !_identityReadOnly,
             decoration: const InputDecoration(
               labelText: 'Marque/modèle machine',
               border: OutlineInputBorder(),
@@ -448,7 +691,7 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
           const SizedBox(height: 12),
           TextField(
             controller: _machineSettingsCtrl,
-            enabled: !_readOnly,
+            enabled: !_identityReadOnly,
             maxLines: 2,
             decoration: const InputDecoration(
               labelText: 'Réglages machine',
@@ -458,7 +701,7 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
           const SizedBox(height: 12),
           TextField(
             controller: _notesCtrl,
-            enabled: !_readOnly,
+            enabled: !_identityReadOnly,
             maxLines: 3,
             decoration: const InputDecoration(
               labelText: 'Notes',
@@ -467,6 +710,7 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
           ),
           const SizedBox(height: 16),
         ],
+      ),
       ),
     );
   }
@@ -516,7 +760,7 @@ class _SecondaryMusclesField extends StatelessWidget {
 
   String _summary() {
     if (selected.isEmpty) return 'Aucun';
-    final names = selected.map(_muscleLabel).toList()..sort();
+    final names = selected.map(muscleLabel).toList()..sort();
     if (names.length <= 2) return names.join(', ');
     return '${names.take(2).join(', ')} +${names.length - 2}';
   }
@@ -649,7 +893,7 @@ class _SecondaryMusclesSheetState extends State<_SecondaryMusclesSheet> {
                   for (final m in options)
                     CheckboxListTile(
                       controlAffinity: ListTileControlAffinity.leading,
-                      title: Text(_muscleLabel(m)),
+                      title: Text(muscleLabel(m)),
                       value: _picked.contains(m),
                       onChanged: (v) => setState(() {
                         if (v == true) {
@@ -756,67 +1000,3 @@ class _PhotoBox extends ConsumerWidget {
   }
 }
 
-/// Maps a muscle group to the legacy ExerciseCategory we still keep in DB
-/// for back-compat with the seeded exercises. Used at save time.
-ExerciseCategory _categoryFromMuscle(MuscleGroup m) {
-  switch (m) {
-    case MuscleGroup.chest:
-    case MuscleGroup.shoulders:
-    case MuscleGroup.triceps:
-      return ExerciseCategory.push;
-    case MuscleGroup.upperBack:
-    case MuscleGroup.lats:
-    case MuscleGroup.biceps:
-    case MuscleGroup.forearms:
-    case MuscleGroup.lowerBack:
-    case MuscleGroup.rearDelts:
-      return ExerciseCategory.pull;
-    case MuscleGroup.quads:
-    case MuscleGroup.hamstrings:
-    case MuscleGroup.glutes:
-    case MuscleGroup.calves:
-      return ExerciseCategory.legs;
-    case MuscleGroup.abs:
-    case MuscleGroup.obliques:
-      return ExerciseCategory.core;
-    case MuscleGroup.cardio:
-      return ExerciseCategory.cardio;
-  }
-}
-
-String _muscleLabel(MuscleGroup m) {
-  switch (m) {
-    case MuscleGroup.chest:
-      return 'Pectoraux';
-    case MuscleGroup.upperBack:
-      return 'Dos (haut)';
-    case MuscleGroup.lats:
-      return 'Grands dorsaux';
-    case MuscleGroup.lowerBack:
-      return 'Lombaires';
-    case MuscleGroup.shoulders:
-      return 'Épaules';
-    case MuscleGroup.rearDelts:
-      return 'Deltoïdes postérieurs';
-    case MuscleGroup.biceps:
-      return 'Biceps';
-    case MuscleGroup.triceps:
-      return 'Triceps';
-    case MuscleGroup.forearms:
-      return 'Avant-bras';
-    case MuscleGroup.quads:
-      return 'Quadriceps';
-    case MuscleGroup.hamstrings:
-      return 'Ischio-jambiers';
-    case MuscleGroup.glutes:
-      return 'Fessiers';
-    case MuscleGroup.calves:
-      return 'Mollets';
-    case MuscleGroup.abs:
-      return 'Abdos';
-    case MuscleGroup.obliques:
-      return 'Obliques';
-    case MuscleGroup.cardio:
-      return 'Cardio';
-  }
-}

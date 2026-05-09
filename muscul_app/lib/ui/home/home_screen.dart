@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/config/supabase_config.dart';
 import '../../core/providers.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/formatters.dart';
 import '../../data/auth/auth_service.dart';
 import '../../domain/models/bodyweight_entry.dart';
 import '../../domain/models/session.dart';
@@ -220,7 +221,7 @@ class _ResumeHero extends ConsumerWidget {
                     ),
                   ),
                   Text(
-                    'démarrée à ${_fmtTime(session.startedAt)} · $durationLabel',
+                    'démarrée à ${fmtTime(session.startedAt)} · $durationLabel',
                     style: TextStyle(
                       color: cs.onPrimary.withOpacity(0.85),
                       fontSize: 12.5,
@@ -399,29 +400,8 @@ class _TemplateCard extends ConsumerWidget {
   }
 }
 
-String _relativeDay(DateTime d) {
-  final now = DateTime.now();
-  final daysAgo = DateTime(now.year, now.month, now.day)
-      .difference(DateTime(d.year, d.month, d.day))
-      .inDays;
-  if (daysAgo == 0) return "Dernière séance aujourd'hui";
-  if (daysAgo == 1) return 'Dernière séance hier';
-  if (daysAgo < 7) return 'Dernière séance il y a $daysAgo j';
-  if (daysAgo < 30) {
-    final weeks = (daysAgo / 7).round();
-    return 'Dernière séance il y a ${weeks} sem';
-  }
-  return 'Dernière séance le ${_fmtDateOnly(d)}';
-}
-
-String _fmtDateOnly(DateTime d) {
-  return '${d.day.toString().padLeft(2, '0')}/'
-      '${d.month.toString().padLeft(2, '0')}/'
-      '${d.year}';
-}
-
-String _fmtTime(DateTime t) =>
-    '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+String _relativeDay(DateTime d) =>
+    fmtRelativeDay(d, prefix: 'Dernière séance');
 
 class _SettingsSheet extends ConsumerWidget {
   const _SettingsSheet();

@@ -49,20 +49,6 @@ class StartSessionController {
     unawaited(ref.read(syncServiceProvider).sync());
     return id;
   }
-
-  /// Promotes a previously planned session into in-progress (clears plannedFor,
-  /// sets startedAt to now if not started yet).
-  Future<void> activatePlanned(String sessionId) async {
-    final sessions = ref.read(sessionRepositoryProvider);
-    final detail = await sessions.getDetail(sessionId);
-    if (detail == null) return;
-    final updated = detail.session.copyWith(
-      clearPlannedFor: true,
-      startedAt: DateTime.now(),
-      updatedAt: DateTime.now(),
-    );
-    await sessions.upsertSession(updated);
-  }
 }
 
 final startSessionControllerProvider = Provider<StartSessionController>((ref) {

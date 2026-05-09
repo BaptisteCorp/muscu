@@ -34,7 +34,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(QueryExecutor e) : super(e);
 
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 9;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -87,6 +87,30 @@ class AppDatabase extends _$AppDatabase {
                 workoutTemplateExercises.restSeconds);
             await m.createTable(templateExerciseSets);
           }
+          if (from < 9) {
+            // Suppression de la planification de séances (jamais utilisée
+            // côté UI). On drop la colonne plannedFor pour garder la DB
+            // simple et alignée avec le modèle.
+            try {
+              await customStatement(
+                  'ALTER TABLE workout_sessions DROP COLUMN planned_for;');
+            } catch (_) {/* déjà absente */}
+          }
+          if (from < 8) {
+            // Refactor surcharge progressive : on remplace le champ
+            // `progression_strategy` par 3 paramètres explicites.
+            await m.addColumn(
+                exercises, exercises.progressiveOverloadEnabled);
+            await m.addColumn(exercises, exercises.progressionPriority);
+            await m.addColumn(exercises, exercises.minimumRpeThreshold);
+            // SQLite >= 3.35 supporte DROP COLUMN. Le plugin sqlite3_flutter_libs
+            // embarque une version récente, mais on protège par try/catch :
+            // si la colonne n'existe plus pour une raison X, on ignore.
+            try {
+              await customStatement(
+                  'ALTER TABLE exercises DROP COLUMN progression_strategy;');
+            } catch (_) {/* ignore */}
+          }
         },
         onCreate: (m) async {
           await m.createAll();
@@ -106,7 +130,6 @@ class AppDatabase extends _$AppDatabase {
                         jsonEncode(s.secondary.map((m) => m.name).toList())),
                     equipment: s.equipment.name,
                     isCustom: const Value(false),
-                    progressionStrategy: const Value('doubleProgression'),
                     targetRepRangeMin: Value(s.repMin),
                     targetRepRangeMax: Value(s.repMax),
                     startingWeightKg: Value(s.startingWeight),

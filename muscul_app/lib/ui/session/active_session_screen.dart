@@ -9,18 +9,30 @@ import 'package:uuid/uuid.dart';
 
 import '../../core/providers.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/formatters.dart';
 import '../../data/repositories/session_repository.dart';
 import '../../data/sync/sync_service.dart';
+import '../../domain/models/enums.dart';
 import '../../domain/models/exercise.dart';
 import '../../domain/models/progression_target.dart';
 import '../../domain/models/session.dart';
 import '../../domain/models/user_settings.dart';
 import '../../domain/models/workout_template.dart';
 import '../../domain/progression/progression_engine.dart';
+import 'edit_set_sheet.dart';
+import 'pending_set.dart';
 import 'quick_swap_sheet.dart';
+import 'rest_edit_sheet.dart';
 import 'rest_timer.dart';
 import 'set_row.dart';
 import 'start_session_controller.dart';
+import 'widgets/exercise_header.dart';
+import 'widgets/meta_chip.dart';
+import 'widgets/nav_exercise_buttons.dart';
+import 'widgets/page_dots.dart';
+import 'widgets/plan_card.dart';
+import 'widgets/session_note_banner.dart';
+import 'widgets/superset_banner.dart';
 
 const _uuid = Uuid();
 
@@ -39,15 +51,12 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
   // User adjustments per session-exercise per set position. Keyed
   // [exerciseSessionId][setIndex] → pending values. Cleared after validate
   // so the next set uses its own plan-derived default.
-  final Map<String, Map<int, _Pending>> _pending = {};
+  final Map<String, Map<int, PendingSet>> _pending = {};
   // skipped absolute set positions per session-exercise (UI-only).
   final Map<String, Set<int>> _skipped = {};
   // Plan from the template, indexed by exerciseId → list of planned sets
   // (sorted by setIndex). Empty list = no template plan (freestyle session).
   Map<String, List<TemplateExerciseSet>> _planByExercise = const {};
-  // Last completed session per exerciseId for THIS template, used to
-  // drive per-set progression. Null = no past data.
-  final Map<String, SessionExerciseWithSets?> _lastByExercise = {};
   Timer? _sessionTicker;
   Duration _elapsed = Duration.zero;
   int _currentPage = 0;
@@ -83,24 +92,9 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
         }
       }
     }
-    // Fetch the last completed session per exercise (in this template).
-    final lastByEx = <String, SessionExerciseWithSets?>{};
-    for (final item in detail.exercises) {
-      final exId = item.sessionExercise.exerciseId;
-      if (lastByEx.containsKey(exId)) continue;
-      lastByEx[exId] = await ref
-          .read(sessionRepositoryProvider)
-          .lastSessionExerciseInTemplate(
-            exerciseId: exId,
-            templateId: templateId,
-          );
-    }
     if (!mounted) return;
     setState(() {
       _planByExercise = planMap;
-      _lastByExercise
-        ..clear()
-        ..addAll(lastByEx);
     });
   }
 
@@ -141,6 +135,8 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
           context.go('/home');
         } else if (action == _ExitAction.finish && context.mounted) {
           await _finish();
+        } else if (action == _ExitAction.abandon && context.mounted) {
+          if (await _confirmAbandon()) await _abandonSession();
         }
       },
       child: Scaffold(
@@ -198,6 +194,11 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
     return Column(
       children: [
         _topBar(session.startedAt, items.length),
+        if ((session.notes ?? '').isNotEmpty)
+          SessionNoteBanner(
+            note: session.notes!,
+            onTap: _editSessionNote,
+          ),
         Expanded(
           child: PageView.builder(
             controller: _pageCtrl,
@@ -207,7 +208,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
           ),
         ),
         if (items.length > 1)
-          _PageDots(count: items.length, current: _currentPage.clamp(0, items.length - 1)),
+          PageDots(count: items.length, current: _currentPage.clamp(0, items.length - 1)),
         Container(
           decoration: BoxDecoration(
             color: Theme.of(context).colorScheme.surfaceContainerLow,
@@ -248,6 +249,8 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
                 context.go('/home');
               } else if (action == _ExitAction.finish && mounted) {
                 await _finish();
+              } else if (action == _ExitAction.abandon && mounted) {
+                if (await _confirmAbandon()) await _abandonSession();
               }
             },
           ),
@@ -393,7 +396,15 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
                 .where((h) =>
                     h.sessionExercise.id != item.sessionExercise.id)
                 .toList();
-            final plannedSets = item.sets.length >= 3 ? item.sets.length : 3;
+            // Source de vérité pour le nombre de séries planifiées :
+            // 1. le template s'il existe (plan.length)
+            // 2. sinon ce que l'utilisateur a déjà saisi (item.sets.length)
+            // 3. fallback à 3 (séance freestyle vierge).
+            final templatePlan =
+                _planByExercise[item.sessionExercise.exerciseId] ?? const [];
+            final plannedSets = templatePlan.isNotEmpty
+                ? templatePlan.length
+                : (item.sets.length >= 3 ? item.sets.length : 3);
             final target = ProgressionEngine.computeNextTarget(
               exercise: exercise,
               plannedSets: plannedSets,
@@ -424,55 +435,52 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
   }) {
     final increment = exercise.effectiveIncrementKg(settings.defaultIncrementKg);
     final plan = _planByExercise[item.sessionExercise.exerciseId] ?? const [];
-    final lastSession = _lastByExercise[item.sessionExercise.exerciseId];
 
-    /// Per-position default reps + weight. Plan + last-session = progression.
-    _Pending defaultFor(int pos) {
-      final plannedSet = pos < plan.length ? plan[pos] : null;
-      // No plan at all: legacy behaviour using the engine's target.
-      if (plannedSet == null) {
-        return _Pending(
-          reps: target.targetReps,
-          weight: target.targetWeightKg,
-          rpe: target.targetRpe,
-        );
-      }
-      // Match the same set-position in the most recent past session.
-      final pastWorking = lastSession?.sets
-              .where((s) => !s.isWarmup)
-              .toList() ??
-          const [];
-      if (pastWorking.length > pos) {
-        final last = pastWorking[pos];
-        final rpeOk = (last.rpe ?? 8) <= 9;
-        if (last.reps >= plannedSet.plannedReps && rpeOk) {
-          // Hit target → bump weight by the increment.
-          return _Pending(
-            reps: plannedSet.plannedReps,
-            weight: last.weightKg + increment,
-            rpe: target.targetRpe,
-          );
-        }
-        // Missed → retry the last weight you used.
-        return _Pending(
-          reps: plannedSet.plannedReps,
+    // The template plan stores the weights at the moment the user designed
+    // it — once progressive overload kicks in, those numbers are stale.
+    // Rebase the plan onto the engine's target so the PLAN card shows what
+    // the user will actually do today (e.g. 4×8 @ 49kg, not @ 44kg).
+    final displayPlan = plan.isEmpty
+        ? const <TemplateExerciseSet>[]
+        : [
+            for (final s in plan)
+              s.copyWith(
+                plannedReps: target.targetReps,
+                plannedWeightKg: target.targetWeightKg,
+              ),
+          ];
+
+    /// Valeurs par défaut de chaque série :
+    ///   1. si une série précédente a déjà été validée dans cette séance,
+    ///      on reprend ses reps/poids — l'utilisateur n'a qu'à saisir une
+    ///      fois s'il dévie du target (ex. plan à 40kg mais il fait 60kg,
+    ///      les séries 2/3/4 doivent défaulter à 60kg, pas rester à 40kg) ;
+    ///   2. sinon on retombe sur le moteur de surcharge progressive (target).
+    /// Le plan du template ne sert que pour la STRUCTURE (nombre de séries) ;
+    /// ses reps/poids planifiés ne sont pas re-imposés à chaque séance,
+    /// sinon la progression serait gelée.
+    PendingSet defaultFor(int pos) {
+      final lastValidated = item.sets.where((s) => !s.isWarmup).toList();
+      if (lastValidated.isNotEmpty) {
+        final last = lastValidated.last;
+        return PendingSet(
+          reps: last.reps,
           weight: last.weightKg,
-          rpe: target.targetRpe,
+          rpe: null,
         );
       }
-      // Never trained this slot → seed with the template's planned values.
-      return _Pending(
-        reps: plannedSet.plannedReps,
-        weight: plannedSet.plannedWeightKg ?? exercise.startingWeightKg,
-        rpe: target.targetRpe,
+      return PendingSet(
+        reps: target.targetReps,
+        weight: target.targetWeightKg,
+        rpe: null,
       );
     }
 
     /// Returns the (possibly user-edited) values for a given set position.
-    _Pending pendingFor(int pos) =>
+    PendingSet pendingFor(int pos) =>
         _pending[item.sessionExercise.id]?[pos] ?? defaultFor(pos);
 
-    void setPendingFor(int pos, _Pending p) {
+    void setPendingFor(int pos, PendingSet p) {
       _pending.putIfAbsent(item.sessionExercise.id, () => {})[pos] = p;
     }
 
@@ -611,12 +619,12 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
-        if (supersetGroupId != null) _SupersetBanner(
+        if (supersetGroupId != null) SupersetBanner(
           partnerCount: partners.length,
           onLeave: () => _leaveSuperset(item),
         ),
         // Exercise header: photo + name + actions, all in one cohesive row.
-        _ExerciseHeader(
+        ExerciseHeader(
           exercise: exercise,
           onSwap: () => _openSwap(item, index),
           onSuperset: index > 0
@@ -630,10 +638,10 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
         ),
         const SizedBox(height: 14),
         // Plan / Target presented as a tonal card with chips.
-        _PlanCard(
-          plan: plan,
+        PlanCard(
+          plan: displayPlan,
           target: target,
-          formatWeight: _fmt,
+          formatWeight: fmtKg,
           formatPlanLine: _planLine,
         ),
         const SizedBox(height: 10),
@@ -642,16 +650,16 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
           runSpacing: 6,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            _MetaChip(
+            MetaChip(
               icon: Icons.timer_outlined,
-              label: _formatRest(item.sessionExercise.restSeconds ??
+              label: fmtRest(item.sessionExercise.restSeconds ??
                   exercise.effectiveRestSeconds(settings.defaultRestSeconds)),
               accent: item.sessionExercise.restSeconds != null,
               onTap: () => _editRestSeconds(item, exercise, settings),
             ),
             if (exercise.machineSettings != null &&
                 exercise.machineSettings!.isNotEmpty)
-              _MetaChip(
+              MetaChip(
                 icon: Icons.tune_rounded,
                 label: exercise.machineSettings!,
                 maxWidth: 240,
@@ -698,7 +706,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
         Row(
           children: [
             if (index > 0)
-              _PrevExerciseButton(
+              PrevExerciseButton(
                 previousExerciseId:
                     items[index - 1].sessionExercise.exerciseId,
                 onPressed: () => _pageCtrl.previousPage(
@@ -708,7 +716,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
               ),
             const Spacer(),
             if (index < items.length - 1)
-              _NextExerciseButton(
+              NextExerciseButton(
                 nextExerciseId:
                     items[index + 1].sessionExercise.exerciseId,
                 onPressed: () => _pageCtrl.nextPage(
@@ -750,7 +758,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
     );
   }
 
-  Future<void> _validateSet(SessionExerciseWithSets item, _Pending p,
+  Future<void> _validateSet(SessionExerciseWithSets item, PendingSet p,
       UserSettings settings, int targetSets,
       {required int setPos, int? restSeconds}) async {
     final restElapsed =
@@ -766,19 +774,34 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
       restSeconds: restElapsed,
       completedAt: DateTime.now(),
     );
-    await ref.read(sessionRepositoryProvider).upsertSet(entry);
+    final repo = ref.read(sessionRepositoryProvider);
+    await repo.upsertSet(entry);
     // Drop the pending override for this set so the next active row picks
     // its plan-derived default — needed for schemes like 7+6 reps.
     setState(() {
       _pending[item.sessionExercise.id]?.remove(setPos);
     });
+    // Ratchet: if this session was started from a template, sync the
+    // validated set's reps/weight back into the template so the user
+    // sees the latest progression next time they look at it or start
+    // another session from the same template.
+    final detail = await repo.getDetail(widget.sessionId);
+    final templateId = detail?.session.templateId;
+    if (templateId != null) {
+      await ref.read(templateRepositoryProvider).applyValidatedSet(
+            templateId: templateId,
+            exerciseId: item.sessionExercise.exerciseId,
+            reps: entry.reps,
+            weightKg: entry.weightKg,
+          );
+    }
   }
 
   Future<void> _editExisting(SetEntry entry) async {
     final updated = await showModalBottomSheet<SetEntry>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => _EditSetSheet(entry: entry),
+      builder: (_) => EditSetSheet(entry: entry),
     );
     if (updated != null) {
       await ref.read(sessionRepositoryProvider).upsertSet(updated);
@@ -923,6 +946,20 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
     final repo = ref.read(sessionRepositoryProvider);
     final detail = await repo.getDetail(widget.sessionId);
     if (detail == null) return;
+    // Refuser de terminer une séance dans laquelle aucune série n'a été
+    // validée — sinon l'historique se remplit de séances vides.
+    final hasAnyWorkingSet = detail.exercises
+        .any((e) => e.sets.any((s) => !s.isWarmup));
+    final isManualEntry = detail.session.endedAt != null;
+    if (!hasAnyWorkingSet && !isManualEntry) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                'Valide au moins une série avant de terminer la séance')),
+      );
+      return;
+    }
     // Manual past-session entries already have an endedAt baked in — keep
     // it so the duration reflects when the user actually trained.
     final endedAt = detail.session.endedAt ?? DateTime.now();
@@ -931,14 +968,19 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
       updatedAt: DateTime.now(),
     );
     await repo.upsertSession(updated);
-    // Fire-and-forget cloud backup so the just-finished workout is safe even
-    // if the app is killed before the periodic sync runs.
+    // Push session + its exercises + sets synchronously so the
+    // just-finished workout is safe on the cloud before the user can
+    // reinstall, kill the app, or lose the device. The periodic sync
+    // would also push, but it's not guaranteed to run in time.
+    try {
+      await ref
+          .read(syncServiceProvider)
+          .pushSessionWithChildren(widget.sessionId);
+    } catch (_) {/* best-effort; the periodic sync will retry */}
+    // Background full sync for everything else (settings, bodyweight…).
     unawaited(ref.read(syncServiceProvider).sync());
     if (mounted) {
       context.go('/home');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Séance terminée 💪')),
-      );
     }
   }
 
@@ -971,10 +1013,17 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
               subtitle: const Text('La séance est sauvegardée comme finie.'),
               onTap: () => Navigator.pop(context, _ExitAction.finish),
             ),
+            ListTile(
+              leading: const Icon(Icons.delete_forever_outlined),
+              title: const Text('Abandonner la séance'),
+              subtitle: const Text(
+                  'Supprime cette séance et tout ce qui a été saisi.'),
+              onTap: () => Navigator.pop(context, _ExitAction.abandon),
+            ),
             const Divider(),
             ListTile(
-              leading: const Icon(Icons.cancel_outlined),
-              title: const Text('Annuler'),
+              leading: const Icon(Icons.arrow_back_rounded),
+              title: const Text('Continuer la séance'),
               onTap: () => Navigator.pop(context),
             ),
           ],
@@ -983,9 +1032,40 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
     );
   }
 
-  String _fmt(double v) {
-    if (v == v.roundToDouble()) return v.toInt().toString();
-    return v.toStringAsFixed(1);
+  Future<bool> _confirmAbandon() async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('Abandonner la séance ?'),
+            content: const Text(
+                "Toutes les séries saisies seront perdues. Cette action est irréversible."),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Annuler'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                ),
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Abandonner'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  Future<void> _abandonSession() async {
+    final repo = ref.read(sessionRepositoryProvider);
+    await repo.softDeleteSession(widget.sessionId);
+    if (mounted) {
+      context.go('/home');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Séance abandonnée')),
+      );
+    }
   }
 
   String _planLine(List<TemplateExerciseSet> plan) {
@@ -996,11 +1076,11 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
     if (allSame) {
       final w = plan.first.plannedWeightKg;
       return '${plan.length}×${plan.first.plannedReps}'
-          '${w == null ? '' : ' @ ${_fmt(w)}kg'}';
+          '${w == null ? '' : ' @ ${fmtKg(w)}kg'}';
     }
     return plan
         .map((s) => '${s.plannedReps}'
-            '${s.plannedWeightKg == null ? '' : '×${_fmt(s.plannedWeightKg!)}'}')
+            '${s.plannedWeightKg == null ? '' : '×${fmtKg(s.plannedWeightKg!)}'}')
         .join(', ');
   }
 
@@ -1009,18 +1089,11 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
   String _bodyweightLabel(double addedKg, UserSettings settings) {
     final added = addedKg == 0
         ? '0kg'
-        : (addedKg > 0 ? '+${_fmt(addedKg)}kg' : '${_fmt(addedKg)}kg');
+        : (addedKg > 0 ? '+${fmtKg(addedKg)}kg' : '${fmtKg(addedKg)}kg');
     final bw = settings.userBodyweightKg;
     if (bw == null) return added;
     final total = bw + addedKg;
-    return '$added (${_fmt(total)}kg)';
-  }
-
-  String _formatRest(int seconds) {
-    if (seconds < 60) return '${seconds}s';
-    final m = seconds ~/ 60;
-    final s = seconds % 60;
-    return s == 0 ? '${m}min' : '${m}min ${s}s';
+    return '$added (${fmtKg(total)}kg)';
   }
 
   Future<void> _editRestSeconds(
@@ -1030,10 +1103,10 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
   ) async {
     final initial = item.sessionExercise.restSeconds ??
         exercise.effectiveRestSeconds(settings.defaultRestSeconds);
-    final result = await showModalBottomSheet<_RestEditResult>(
+    final result = await showModalBottomSheet<RestEditResult>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => _RestEditSheet(
+      builder: (_) => RestEditSheet(
         initialSeconds: initial,
         isOverridden: item.sessionExercise.restSeconds != null,
         defaultSeconds:
@@ -1049,698 +1122,6 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
   }
 }
 
-class _PrevExerciseButton extends ConsumerWidget {
-  final String previousExerciseId;
-  final VoidCallback onPressed;
-  const _PrevExerciseButton({
-    required this.previousExerciseId,
-    required this.onPressed,
-  });
 
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final exAsync = ref.watch(exerciseByIdProvider(previousExerciseId));
-    final name = exAsync.valueOrNull?.name ?? 'Précédent';
-    return _NavExerciseButton(
-      label: name,
-      icon: Icons.chevron_left_rounded,
-      iconLeading: true,
-      onPressed: onPressed,
-    );
-  }
-}
+enum _ExitAction { pause, finish, abandon }
 
-class _NextExerciseButton extends ConsumerWidget {
-  final String nextExerciseId;
-  final VoidCallback onPressed;
-  const _NextExerciseButton({
-    required this.nextExerciseId,
-    required this.onPressed,
-  });
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final exAsync = ref.watch(exerciseByIdProvider(nextExerciseId));
-    final name = exAsync.valueOrNull?.name ?? 'Suivant';
-    return _NavExerciseButton(
-      label: name,
-      icon: Icons.chevron_right_rounded,
-      iconLeading: false,
-      onPressed: onPressed,
-    );
-  }
-}
-
-class _NavExerciseButton extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final bool iconLeading;
-  final VoidCallback onPressed;
-  const _NavExerciseButton({
-    required this.label,
-    required this.icon,
-    required this.iconLeading,
-    required this.onPressed,
-  });
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final iconWidget = Icon(icon, size: 20, color: cs.primary);
-    final textWidget = ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 160),
-      child: Text(
-        label,
-        overflow: TextOverflow.ellipsis,
-        maxLines: 1,
-        style: TextStyle(
-          color: cs.onSurface,
-          fontWeight: FontWeight.w700,
-          fontSize: 14,
-        ),
-      ),
-    );
-    return InkWell(
-      onTap: onPressed,
-      borderRadius: BorderRadius.circular(AppTokens.radiusM),
-      child: Container(
-        height: AppTokens.tapTarget,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        decoration: BoxDecoration(
-          color: cs.surfaceContainer,
-          border: Border.all(color: cs.outlineVariant),
-          borderRadius: BorderRadius.circular(AppTokens.radiusM),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: iconLeading
-              ? [iconWidget, const SizedBox(width: 6), textWidget]
-              : [textWidget, const SizedBox(width: 6), iconWidget],
-        ),
-      ),
-    );
-  }
-}
-
-class _SupersetBanner extends StatelessWidget {
-  final int partnerCount;
-  final VoidCallback onLeave;
-  const _SupersetBanner({required this.partnerCount, required this.onLeave});
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: cs.secondaryContainer.withOpacity(0.55),
-        borderRadius: BorderRadius.circular(AppTokens.radiusM),
-        border: Border.all(color: cs.secondary.withOpacity(0.5)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.link_rounded, size: 18, color: cs.secondary),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              'Superset · enchaîne avec ' +
-                  (partnerCount == 1 ? 'cet exo' : '$partnerCount exos'),
-              style: TextStyle(
-                color: cs.onSecondaryContainer,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.2,
-              ),
-            ),
-          ),
-          TextButton(
-            onPressed: onLeave,
-            style: TextButton.styleFrom(foregroundColor: cs.secondary),
-            child: const Text('Détacher'),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ExerciseHeader extends StatelessWidget {
-  final Exercise exercise;
-  final VoidCallback onSwap;
-  final VoidCallback? onSuperset;
-  final bool isSuperset;
-  final Future<File?>? photoFuture;
-  final ValueChanged<File> onPhotoTap;
-  const _ExerciseHeader({
-    required this.exercise,
-    required this.onSwap,
-    required this.onSuperset,
-    required this.isSuperset,
-    required this.photoFuture,
-    required this.onPhotoTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        if (photoFuture != null)
-          FutureBuilder<File?>(
-            future: photoFuture,
-            builder: (_, snap) {
-              if (snap.data == null) {
-                return Container(
-                  width: 56,
-                  height: 56,
-                  margin: const EdgeInsets.only(right: 12),
-                  decoration: BoxDecoration(
-                    color: cs.surfaceContainerHigh,
-                    borderRadius: BorderRadius.circular(AppTokens.radiusM),
-                  ),
-                  child: Icon(Icons.fitness_center,
-                      size: 22, color: cs.onSurfaceVariant),
-                );
-              }
-              return Padding(
-                padding: const EdgeInsets.only(right: 12),
-                child: GestureDetector(
-                  onTap: () => onPhotoTap(snap.data!),
-                  child: Hero(
-                    tag: 'exo-photo-${exercise.id}',
-                    child: ClipRRect(
-                      borderRadius:
-                          BorderRadius.circular(AppTokens.radiusM),
-                      child: Image.file(
-                        snap.data!,
-                        width: 56,
-                        height: 56,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              GestureDetector(
-                onLongPress: onSwap,
-                child: Text(
-                  exercise.name,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 22,
-                    height: 1.15,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: -0.3,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                _muscleLabel(exercise),
-                style: TextStyle(
-                  color: cs.onSurfaceVariant,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.3,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 4),
-        IconButton(
-          icon: const Icon(Icons.swap_horiz_rounded),
-          tooltip: 'Substituer',
-          onPressed: onSwap,
-          style: IconButton.styleFrom(
-            backgroundColor: cs.surfaceContainer,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppTokens.radiusS),
-            ),
-          ),
-        ),
-        if (onSuperset != null) ...[
-          const SizedBox(width: 4),
-          IconButton(
-            icon: Icon(
-              Icons.link_rounded,
-              color: isSuperset ? cs.secondary : null,
-            ),
-            tooltip: isSuperset
-                ? "Étendre le superset à l'exo précédent"
-                : "Mettre en superset avec l'exo précédent",
-            onPressed: onSuperset,
-            style: IconButton.styleFrom(
-              backgroundColor: cs.surfaceContainer,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(AppTokens.radiusS),
-              ),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  String _muscleLabel(Exercise ex) {
-    final m = ex.primaryMuscle.name;
-    final eq = ex.equipment.name;
-    return '${_pretty(m)} · ${_pretty(eq)}';
-  }
-
-  String _pretty(String enumName) {
-    if (enumName.isEmpty) return enumName;
-    final firstLetter = enumName[0].toUpperCase();
-    final rest = enumName.substring(1).replaceAllMapped(
-        RegExp(r'[A-Z]'), (m) => ' ${m[0]!.toLowerCase()}');
-    return firstLetter + rest;
-  }
-}
-
-class _PlanCard extends StatelessWidget {
-  final List<TemplateExerciseSet> plan;
-  final ProgressionTarget target;
-  final String Function(double) formatWeight;
-  final String Function(List<TemplateExerciseSet>) formatPlanLine;
-  const _PlanCard({
-    required this.plan,
-    required this.target,
-    required this.formatWeight,
-    required this.formatPlanLine,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final hasPlan = plan.isNotEmpty;
-    final title = hasPlan ? 'PLAN' : 'CIBLE';
-    final body = hasPlan
-        ? formatPlanLine(plan)
-        : '${target.targetSets}×${target.targetReps} @ '
-            '${formatWeight(target.targetWeightKg)} kg'
-            '${target.targetRpe != null ? ' · RPE ${target.targetRpe}' : ''}';
-    return Container(
-      decoration: BoxDecoration(
-        color: cs.surfaceContainer,
-        borderRadius: BorderRadius.circular(AppTokens.radiusM),
-        border: Border.all(color: cs.outlineVariant),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 4,
-                height: 14,
-                decoration: BoxDecoration(
-                  color: hasPlan ? cs.secondary : cs.primary,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                title,
-                style: TextStyle(
-                  color: cs.onSurfaceVariant,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1.4,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            body,
-            style: TextStyle(
-              color: cs.onSurface,
-              fontSize: 15.5,
-              height: 1.3,
-              fontWeight: FontWeight.w700,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
-          ),
-          if (!hasPlan && target.reason.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(
-              target.reason,
-              style: TextStyle(
-                color: cs.onSurfaceVariant,
-                fontSize: 12,
-                fontStyle: FontStyle.italic,
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _MetaChip extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool accent;
-  final double? maxWidth;
-  final VoidCallback? onTap;
-  const _MetaChip({
-    required this.icon,
-    required this.label,
-    this.accent = false,
-    this.maxWidth,
-    this.onTap,
-  });
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final fg = accent ? cs.primary : cs.onSurfaceVariant;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(AppTokens.radiusS),
-      child: Container(
-        constraints: BoxConstraints(maxWidth: maxWidth ?? double.infinity),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        decoration: BoxDecoration(
-          color: accent
-              ? cs.primary.withOpacity(0.10)
-              : cs.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(AppTokens.radiusS),
-          border: Border.all(
-            color: accent
-                ? cs.primary.withOpacity(0.4)
-                : cs.outlineVariant,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 14, color: fg),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: fg,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _PageDots extends StatelessWidget {
-  final int count;
-  final int current;
-  const _PageDots({required this.count, required this.current});
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          for (var i = 0; i < count; i++)
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeOut,
-              width: i == current ? 18 : 6,
-              height: 6,
-              margin: const EdgeInsets.symmetric(horizontal: 3),
-              decoration: BoxDecoration(
-                color: i == current
-                    ? cs.primary
-                    : cs.surfaceContainerHigh,
-                borderRadius: BorderRadius.circular(3),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-enum _ExitAction { pause, finish }
-
-class _Pending {
-  final int reps;
-  final double weight;
-  final int? rpe;
-  const _Pending({required this.reps, required this.weight, this.rpe});
-  _Pending copyWith({int? reps, double? weight, int? rpe}) => _Pending(
-        reps: reps ?? this.reps,
-        weight: weight ?? this.weight,
-        rpe: rpe ?? this.rpe,
-      );
-}
-
-class _RestEditResult {
-  final int seconds;
-  final bool reset;
-  const _RestEditResult({required this.seconds, this.reset = false});
-}
-
-class _RestEditSheet extends StatefulWidget {
-  final int initialSeconds;
-  final bool isOverridden;
-  final int defaultSeconds;
-  const _RestEditSheet({
-    required this.initialSeconds,
-    required this.isOverridden,
-    required this.defaultSeconds,
-  });
-  @override
-  State<_RestEditSheet> createState() => _RestEditSheetState();
-}
-
-class _RestEditSheetState extends State<_RestEditSheet> {
-  late int _seconds;
-
-  @override
-  void initState() {
-    super.initState();
-    _seconds = widget.initialSeconds;
-  }
-
-  String _format(int s) {
-    if (s < 60) return '${s}s';
-    final m = s ~/ 60;
-    final r = s % 60;
-    return r == 0 ? '${m}min' : '${m}min ${r}s';
-  }
-
-  void _adjust(int delta) {
-    setState(() {
-      _seconds = (_seconds + delta).clamp(0, 60 * 30);
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-            16, 16, 16, MediaQuery.of(context).viewInsets.bottom + 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              'Repos pour cet exercice',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Par défaut : ${_format(widget.defaultSeconds)}',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                FilledButton.tonal(
-                  onPressed: () => _adjust(-30),
-                  child: const Text('-30s'),
-                ),
-                FilledButton.tonal(
-                  onPressed: () => _adjust(-15),
-                  child: const Text('-15s'),
-                ),
-                Text(
-                  _format(_seconds),
-                  style: Theme.of(context)
-                      .textTheme
-                      .headlineSmall
-                      ?.copyWith(fontWeight: FontWeight.bold),
-                ),
-                FilledButton.tonal(
-                  onPressed: () => _adjust(15),
-                  child: const Text('+15s'),
-                ),
-                FilledButton.tonal(
-                  onPressed: () => _adjust(30),
-                  child: const Text('+30s'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              alignment: WrapAlignment.center,
-              children: [
-                for (final preset in const [60, 90, 120, 150, 180, 240, 300])
-                  ChoiceChip(
-                    label: Text(_format(preset)),
-                    selected: _seconds == preset,
-                    onSelected: (_) => setState(() => _seconds = preset),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                if (widget.isOverridden)
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(
-                        context,
-                        const _RestEditResult(seconds: 0, reset: true),
-                      ),
-                      child: const Text('Réinitialiser'),
-                    ),
-                  ),
-                if (widget.isOverridden) const SizedBox(width: 8),
-                Expanded(
-                  child: FilledButton(
-                    onPressed: () => Navigator.pop(
-                      context,
-                      _RestEditResult(seconds: _seconds),
-                    ),
-                    child: const Text('Enregistrer'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _EditSetSheet extends StatefulWidget {
-  final SetEntry entry;
-  const _EditSetSheet({required this.entry});
-  @override
-  State<_EditSetSheet> createState() => _EditSetSheetState();
-}
-
-class _EditSetSheetState extends State<_EditSetSheet> {
-  late TextEditingController repsCtrl;
-  late TextEditingController weightCtrl;
-  late TextEditingController rpeCtrl;
-
-  @override
-  void initState() {
-    super.initState();
-    repsCtrl = TextEditingController(text: widget.entry.reps.toString());
-    weightCtrl =
-        TextEditingController(text: widget.entry.weightKg.toString());
-    rpeCtrl = TextEditingController(text: widget.entry.rpe?.toString() ?? '');
-  }
-
-  @override
-  void dispose() {
-    repsCtrl.dispose();
-    weightCtrl.dispose();
-    rpeCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-            16, 16, 16, MediaQuery.of(context).viewInsets.bottom + 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('Série ${widget.entry.setIndex + 1}',
-                style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 12),
-            Row(children: [
-              Expanded(
-                child: TextField(
-                  controller: repsCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration:
-                      const InputDecoration(labelText: 'Reps', border: OutlineInputBorder()),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: TextField(
-                  controller: weightCtrl,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                      labelText: 'Poids (kg)', border: OutlineInputBorder()),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: TextField(
-                  controller: rpeCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                      labelText: 'RPE', border: OutlineInputBorder()),
-                ),
-              ),
-            ]),
-            const SizedBox(height: 16),
-            FilledButton(
-              onPressed: () {
-                final reps = int.tryParse(repsCtrl.text) ?? widget.entry.reps;
-                final w = double.tryParse(weightCtrl.text) ??
-                    widget.entry.weightKg;
-                final rpe =
-                    rpeCtrl.text.isEmpty ? null : int.tryParse(rpeCtrl.text);
-                Navigator.pop(
-                  context,
-                  widget.entry.copyWith(
-                    reps: reps,
-                    weightKg: w,
-                    rpe: rpe,
-                    clearRpe: rpe == null,
-                  ),
-                );
-              },
-              child: const Text('Enregistrer'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}

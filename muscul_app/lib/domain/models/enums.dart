@@ -21,7 +21,26 @@ enum MuscleGroup {
 
 enum Equipment { barbell, dumbbell, machine, cable, bodyweight, other }
 
-enum ProgressionStrategyKind { doubleProgression, rpeAutoregulated }
+extension EquipmentLabel on Equipment {
+  String get label {
+    switch (this) {
+      case Equipment.barbell:
+        return 'Barre';
+      case Equipment.dumbbell:
+        return 'Haltères';
+      case Equipment.machine:
+        return 'Machine';
+      case Equipment.cable:
+        return 'Poulie';
+      case Equipment.bodyweight:
+        return 'Poids du corps';
+      case Equipment.other:
+        return 'Autre';
+    }
+  }
+}
+
+enum ProgressionPriority { repsFirst, weightFirst }
 
 enum WeightUnit { kg, lb }
 

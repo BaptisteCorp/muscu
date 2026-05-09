@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/providers.dart';
+import '../../../core/utils/formatters.dart';
 import '../../../data/repositories/template_repository.dart';
 import '../../../domain/models/enums.dart';
 import '../../../domain/models/exercise.dart';
@@ -25,18 +26,27 @@ class _TemplateEditScreenState extends ConsumerState<TemplateEditScreen> {
   WorkoutTemplate? _initial;
   bool _loading = true;
   bool _showErrors = false;
+  bool _dirty = false;
 
   @override
   void initState() {
     super.initState();
+    _nameCtrl.addListener(_markDirty);
+    _notesCtrl.addListener(_markDirty);
     _load();
   }
 
   @override
   void dispose() {
+    _nameCtrl.removeListener(_markDirty);
+    _notesCtrl.removeListener(_markDirty);
     _nameCtrl.dispose();
     _notesCtrl.dispose();
     super.dispose();
+  }
+
+  void _markDirty() {
+    if (!_dirty) _dirty = true;
   }
 
   Future<void> _load() async {
@@ -51,22 +61,15 @@ class _TemplateEditScreenState extends ConsumerState<TemplateEditScreen> {
         _exercises = [...detail.exercises];
       }
     }
+    // Listeners above flipped _dirty during initial population — reset it.
+    _dirty = false;
     setState(() => _loading = false);
   }
 
-  Future<void> _save() async {
+  /// Persists the template + its exercises. Returns true on success.
+  Future<bool> _persist() async {
     final name = _nameCtrl.text.trim();
-    if (name.isEmpty || _exercises.isEmpty) {
-      setState(() => _showErrors = true);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(name.isEmpty
-              ? 'Donne un nom au template'
-              : 'Ajoute au moins un exercice'),
-        ),
-      );
-      return;
-    }
+    if (name.isEmpty || _exercises.isEmpty) return false;
     final repo = ref.read(templateRepositoryProvider);
     final id = _initial?.id ?? _uuid.v4();
     final now = DateTime.now();
@@ -97,7 +100,57 @@ class _TemplateEditScreenState extends ConsumerState<TemplateEditScreen> {
         ),
     ];
     await repo.setTemplateExercises(id, reordered);
+    _dirty = false;
+    return true;
+  }
+
+  Future<void> _save() async {
+    final name = _nameCtrl.text.trim();
+    if (name.isEmpty || _exercises.isEmpty) {
+      setState(() => _showErrors = true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(name.isEmpty
+              ? 'Donne un nom au template'
+              : 'Ajoute au moins un exercice'),
+        ),
+      );
+      return;
+    }
+    await _persist();
     if (mounted) context.pop();
+  }
+
+  /// Called when the user presses back / system back. Auto-save if the form
+  /// is valid; otherwise ask whether to discard.
+  Future<bool> _handlePop() async {
+    if (!_dirty) return true;
+    final canSave =
+        _nameCtrl.text.trim().isNotEmpty && _exercises.isNotEmpty;
+    if (canSave) {
+      await _persist();
+      return true;
+    }
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Annuler les modifications ?'),
+        content: const Text(
+            'Le template ne peut pas être enregistré (nom manquant ou aucun exercice). '
+            'Voulez-vous abandonner les modifications ?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Continuer'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Abandonner'),
+          ),
+        ],
+      ),
+    );
+    return discard == true;
   }
 
   Future<void> _delete() async {
@@ -165,6 +218,7 @@ class _TemplateEditScreenState extends ConsumerState<TemplateEditScreen> {
       ),
     );
     if (result != null) {
+      _markDirty();
       setState(() => _exercises.add(result));
     }
   }
@@ -184,6 +238,7 @@ class _TemplateEditScreenState extends ConsumerState<TemplateEditScreen> {
       ),
     );
     if (result != null) {
+      _markDirty();
       setState(() => _exercises[index] = result);
     }
   }
@@ -193,7 +248,14 @@ class _TemplateEditScreenState extends ConsumerState<TemplateEditScreen> {
     if (_loading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        final allow = await _handlePop();
+        if (allow && mounted) context.pop();
+      },
+      child: Scaffold(
       appBar: AppBar(
         title: Text(_initial == null ? 'Nouveau template' : 'Template'),
         actions: [
@@ -279,6 +341,7 @@ class _TemplateEditScreenState extends ConsumerState<TemplateEditScreen> {
             physics: const NeverScrollableScrollPhysics(),
             buildDefaultDragHandles: true,
             onReorder: (o, n) {
+              _markDirty();
               setState(() {
                 if (n > o) n -= 1;
                 final item = _exercises.removeAt(o);
@@ -291,7 +354,10 @@ class _TemplateEditScreenState extends ConsumerState<TemplateEditScreen> {
                   key: ValueKey(_exercises[i].exercise.id),
                   plan: _exercises[i],
                   onTap: () => _editExercisePlan(i),
-                  onDelete: () => setState(() => _exercises.removeAt(i)),
+                  onDelete: () {
+                    _markDirty();
+                    setState(() => _exercises.removeAt(i));
+                  },
                 ),
             ],
           ),
@@ -302,6 +368,7 @@ class _TemplateEditScreenState extends ConsumerState<TemplateEditScreen> {
             label: const Text('Ajouter un exercice'),
           ),
         ],
+      ),
       ),
     );
   }
@@ -363,28 +430,16 @@ String _planSummary(TemplateExerciseWithSets plan) {
   if (allSame) {
     final w = sets.first.plannedWeightKg;
     body = '${sets.length}×${sets.first.plannedReps}'
-        '${w == null ? '' : ' @ ${_fmtKg(w)}kg'}';
+        '${w == null ? '' : ' @ ${fmtKg(w)}kg'}';
   } else {
     body = sets
         .map((s) => '${s.plannedReps}'
-            '${s.plannedWeightKg == null ? '' : '×${_fmtKg(s.plannedWeightKg!)}'}')
+            '${s.plannedWeightKg == null ? '' : '×${fmtKg(s.plannedWeightKg!)}'}')
         .join(', ');
   }
   final rest = plan.exercise.restSeconds;
-  if (rest != null) body += ' • repos ${_fmtRest(rest)}';
+  if (rest != null) body += ' • repos ${fmtRest(rest)}';
   return body;
-}
-
-String _fmtKg(double v) {
-  if (v == v.roundToDouble()) return v.toInt().toString();
-  return v.toStringAsFixed(1);
-}
-
-String _fmtRest(int s) {
-  if (s < 60) return '${s}s';
-  final m = s ~/ 60;
-  final r = s % 60;
-  return r == 0 ? '${m}min' : '${m}min${r}s';
 }
 
 class _ExercisePickerSheet extends ConsumerStatefulWidget {
@@ -496,8 +551,8 @@ class _ExercisePickerSheetState extends ConsumerState<_ExercisePickerSheet> {
                         ),
                         subtitle: Text(
                           count > 0
-                              ? '${_muscleLabel(ex.primaryMuscle)} • fait $count fois'
-                              : _muscleLabel(ex.primaryMuscle),
+                              ? '${muscleLabel(ex.primaryMuscle)} • fait $count fois'
+                              : muscleLabel(ex.primaryMuscle),
                         ),
                         onTap: () => Navigator.pop(context, ex),
                       );
@@ -608,43 +663,6 @@ int _relevanceScore(Exercise ex, List<MuscleGroup> ordered) {
   final pIdx = ordered.indexOf(ex.primaryMuscle);
   if (pIdx < 0) return 0;
   return (n - pIdx) * 3;
-}
-
-String _muscleLabel(MuscleGroup m) {
-  switch (m) {
-    case MuscleGroup.chest:
-      return 'Pectoraux';
-    case MuscleGroup.upperBack:
-      return 'Dos (haut)';
-    case MuscleGroup.lats:
-      return 'Grands dorsaux';
-    case MuscleGroup.lowerBack:
-      return 'Lombaires';
-    case MuscleGroup.shoulders:
-      return 'Épaules';
-    case MuscleGroup.rearDelts:
-      return 'Deltoïdes postérieurs';
-    case MuscleGroup.biceps:
-      return 'Biceps';
-    case MuscleGroup.triceps:
-      return 'Triceps';
-    case MuscleGroup.forearms:
-      return 'Avant-bras';
-    case MuscleGroup.quads:
-      return 'Quadriceps';
-    case MuscleGroup.hamstrings:
-      return 'Ischio-jambiers';
-    case MuscleGroup.glutes:
-      return 'Fessiers';
-    case MuscleGroup.calves:
-      return 'Mollets';
-    case MuscleGroup.abs:
-      return 'Abdos';
-    case MuscleGroup.obliques:
-      return 'Obliques';
-    case MuscleGroup.cardio:
-      return 'Cardio';
-  }
 }
 
 /// Bottom sheet to plan an exercise inside a template:
@@ -1062,7 +1080,7 @@ class _PlanSetRowState extends State<_PlanSetRow> {
     _weightCtrl = TextEditingController(
       text: widget.set.plannedWeightKg == null
           ? ''
-          : _fmtKg(widget.set.plannedWeightKg!),
+          : fmtKg(widget.set.plannedWeightKg!),
     );
   }
 
@@ -1079,7 +1097,7 @@ class _PlanSetRowState extends State<_PlanSetRow> {
     if (oldWidget.set.plannedWeightKg != widget.set.plannedWeightKg) {
       _weightCtrl.text = widget.set.plannedWeightKg == null
           ? ''
-          : _fmtKg(widget.set.plannedWeightKg!);
+          : fmtKg(widget.set.plannedWeightKg!);
     }
   }
 

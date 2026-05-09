@@ -11,8 +11,11 @@ class Exercises extends Table {
   BoolColumn get isCustom => boolean().withDefault(const Constant(false))();
   RealColumn get defaultIncrementKg => real().nullable()();
   IntColumn get defaultRestSeconds => integer().nullable()();
-  TextColumn get progressionStrategy =>
-      text().withDefault(const Constant('doubleProgression'))();
+  BoolColumn get progressiveOverloadEnabled =>
+      boolean().withDefault(const Constant(true))();
+  TextColumn get progressionPriority =>
+      text().withDefault(const Constant('repsFirst'))();
+  IntColumn get minimumRpeThreshold => integer().nullable()();
   IntColumn get targetRepRangeMin => integer().withDefault(const Constant(8))();
   IntColumn get targetRepRangeMax => integer().withDefault(const Constant(12))();
   RealColumn get startingWeightKg =>

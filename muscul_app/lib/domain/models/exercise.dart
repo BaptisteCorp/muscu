@@ -10,7 +10,20 @@ class Exercise {
   final bool isCustom;
   final double? defaultIncrementKg;
   final int? defaultRestSeconds;
-  final ProgressionStrategyKind progressionStrategy;
+
+  // --- Surcharge progressive --------------------------------------------
+  /// Master switch. Si false, la séance suivante reproduit exactement les
+  /// dernières valeurs (poids + reps).
+  final bool progressiveOverloadEnabled;
+
+  /// Ordre d'application : monter les reps d'abord, ou la charge d'abord.
+  final ProgressionPriority progressionPriority;
+
+  /// RPE maximum autorisé pour valider une progression (incl.). Si la séance
+  /// précédente a dépassé ce seuil, on ne progresse pas. `null` = pas de
+  /// contrainte RPE. Les sets sans RPE renseigné sont considérés validés.
+  final int? minimumRpeThreshold;
+
   final int targetRepRangeMin;
   final int targetRepRangeMax;
   final double startingWeightKg;
@@ -33,11 +46,13 @@ class Exercise {
     required this.secondaryMuscles,
     required this.equipment,
     required this.isCustom,
-    required this.progressionStrategy,
     required this.targetRepRangeMin,
     required this.targetRepRangeMax,
     required this.startingWeightKg,
     required this.updatedAt,
+    this.progressiveOverloadEnabled = true,
+    this.progressionPriority = ProgressionPriority.repsFirst,
+    this.minimumRpeThreshold,
     this.useBodyweight = false,
     this.defaultIncrementKg,
     this.defaultRestSeconds,
@@ -60,7 +75,10 @@ class Exercise {
     bool clearDefaultIncrementKg = false,
     int? defaultRestSeconds,
     bool clearDefaultRestSeconds = false,
-    ProgressionStrategyKind? progressionStrategy,
+    bool? progressiveOverloadEnabled,
+    ProgressionPriority? progressionPriority,
+    int? minimumRpeThreshold,
+    bool clearMinimumRpeThreshold = false,
     int? targetRepRangeMin,
     int? targetRepRangeMax,
     double? startingWeightKg,
@@ -92,7 +110,12 @@ class Exercise {
       defaultRestSeconds: clearDefaultRestSeconds
           ? null
           : (defaultRestSeconds ?? this.defaultRestSeconds),
-      progressionStrategy: progressionStrategy ?? this.progressionStrategy,
+      progressiveOverloadEnabled:
+          progressiveOverloadEnabled ?? this.progressiveOverloadEnabled,
+      progressionPriority: progressionPriority ?? this.progressionPriority,
+      minimumRpeThreshold: clearMinimumRpeThreshold
+          ? null
+          : (minimumRpeThreshold ?? this.minimumRpeThreshold),
       targetRepRangeMin: targetRepRangeMin ?? this.targetRepRangeMin,
       targetRepRangeMax: targetRepRangeMax ?? this.targetRepRangeMax,
       startingWeightKg: startingWeightKg ?? this.startingWeightKg,

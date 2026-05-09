@@ -25,6 +25,23 @@ abstract class TemplateRepository {
       String templateExerciseId);
 
   Future<void> softDelete(String id);
+
+  /// Replace every planned rep/weight value across this template's
+  /// exercise rows that match [exerciseId] with the given values.
+  ///
+  /// Called when the user validates a working set during a session that
+  /// was started from this template — the freshly-done weight/reps
+  /// becomes the template's new "default" so it shows up next time the
+  /// user looks at the template or starts another session from it.
+  ///
+  /// Bumps the template's updated_at + sync_status so the sync picks up
+  /// the change and propagates it to the cloud.
+  Future<void> applyValidatedSet({
+    required String templateId,
+    required String exerciseId,
+    required int reps,
+    required double? weightKg,
+  });
 }
 
 class LocalTemplateRepository implements TemplateRepository {
@@ -139,5 +156,52 @@ class LocalTemplateRepository implements TemplateRepository {
         syncStatus: const Value('pending'),
       ),
     );
+  }
+
+  @override
+  Future<void> applyValidatedSet({
+    required String templateId,
+    required String exerciseId,
+    required int reps,
+    required double? weightKg,
+  }) async {
+    await db.transaction(() async {
+      final teRows = await (db.select(db.workoutTemplateExercises)
+            ..where((t) =>
+                t.templateId.equals(templateId) &
+                t.exerciseId.equals(exerciseId)))
+          .get();
+      if (teRows.isEmpty) return;
+      // Ratchet up only: never let a lighter / lower-rep validation drag
+      // the template back down. The "current" baseline is read from the
+      // first planned set of each matching template_exercise.
+      for (final teRow in teRows) {
+        final existing = await (db.select(db.templateExerciseSets)
+              ..where((t) => t.templateExerciseId.equals(teRow.id))
+              ..orderBy([(t) => OrderingTerm.asc(t.setIndex)])
+              ..limit(1))
+            .getSingleOrNull();
+        if (existing != null) {
+          final currentWeight = existing.plannedWeightKg ?? 0;
+          final newWeight = weightKg ?? 0;
+          final isUp = newWeight > currentWeight ||
+              (newWeight == currentWeight &&
+                  reps > existing.plannedReps);
+          if (!isUp) continue;
+        }
+        await (db.update(db.templateExerciseSets)
+              ..where((t) => t.templateExerciseId.equals(teRow.id)))
+            .write(TemplateExerciseSetsCompanion(
+          plannedReps: Value(reps),
+          plannedWeightKg: Value(weightKg),
+        ));
+      }
+      await (db.update(db.workoutTemplates)
+            ..where((t) => t.id.equals(templateId)))
+          .write(WorkoutTemplatesCompanion(
+        updatedAt: Value(DateTime.now()),
+        syncStatus: const Value('pending'),
+      ));
+    });
   }
 }

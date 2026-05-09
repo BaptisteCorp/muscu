@@ -58,9 +58,17 @@ class _MusculAppState extends ConsumerState<MusculApp>
     if (!svc.isAvailable) return;
     _syncInFlight = true;
     try {
-      await svc.sync();
-    } catch (_) {
-      // Silent: this is a background autosave. Manual button surfaces errors.
+      final report = await svc.sync();
+      // Surface the result so MainScaffold can show errors. Without this
+      // a failing sync silently swallows the error and the user thinks
+      // their data is gone.
+      ref.read(lastSyncReportProvider.notifier).state = report;
+    } catch (e, st) {
+      ref.read(lastSyncReportProvider.notifier).state = SyncReport(
+        ok: false,
+        error: '$e',
+        stackTrace: st.toString(),
+      );
     } finally {
       _syncInFlight = false;
     }

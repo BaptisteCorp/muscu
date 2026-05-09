@@ -13,7 +13,6 @@ class SessionDetail {
 abstract class SessionRepository {
   Stream<List<WorkoutSession>> watchHistory({int limit = 50});
   Stream<WorkoutSession?> watchInProgress();
-  Stream<List<WorkoutSession>> watchPlanned({DateTime? from, DateTime? to});
 
   Future<SessionDetail?> getDetail(String sessionId);
   Stream<SessionDetail?> watchDetail(String sessionId);
@@ -28,14 +27,6 @@ abstract class SessionRepository {
   /// Returns the full history for an exercise across all sessions, most-recent first.
   Future<List<SessionExerciseWithSets>> historyForExercise(String exerciseId,
       {int limit = 30});
-
-  /// Returns the most recent ended session-exercise for [exerciseId]
-  /// inside the workouts of [templateId] (null = freestyle / any). Used to
-  /// drive per-set progressive overload from the user's actual past.
-  Future<SessionExerciseWithSets?> lastSessionExerciseInTemplate({
-    required String exerciseId,
-    required String? templateId,
-  });
 
   /// Returns the most recent ended working-sets for [exerciseId] across all
   /// templates / freestyle sessions. Tries to match [preferSetCount] exactly
@@ -110,28 +101,12 @@ class LocalSessionRepository implements SessionRepository {
   @override
   Stream<WorkoutSession?> watchInProgress() {
     final q = db.select(db.workoutSessions)
-      ..where((t) =>
-          t.endedAt.isNull() & t.plannedFor.isNull() & t.deletedAt.isNull())
+      ..where((t) => t.endedAt.isNull() & t.deletedAt.isNull())
       ..orderBy([(t) => OrderingTerm.desc(t.startedAt)])
       ..limit(1);
     return q
         .watch()
         .map((rows) => rows.isEmpty ? null : sessionFromRow(rows.first));
-  }
-
-  @override
-  Stream<List<WorkoutSession>> watchPlanned({DateTime? from, DateTime? to}) {
-    final q = db.select(db.workoutSessions);
-    q.where((t) {
-      var cond = t.endedAt.isNull() &
-          t.plannedFor.isNotNull() &
-          t.deletedAt.isNull();
-      if (from != null) cond = cond & t.plannedFor.isBiggerOrEqualValue(from);
-      if (to != null) cond = cond & t.plannedFor.isSmallerOrEqualValue(to);
-      return cond;
-    });
-    q.orderBy([(t) => OrderingTerm.asc(t.plannedFor)]);
-    return q.watch().map((rows) => rows.map(sessionFromRow).toList());
   }
 
   Future<List<SessionExerciseWithSets>> _exercisesWithSets(
@@ -472,39 +447,6 @@ class LocalSessionRepository implements SessionRepository {
       },
     ).watch().map((rows) =>
         [for (final r in rows) r.read<String>('exercise_id')]);
-  }
-
-  @override
-  Future<SessionExerciseWithSets?> lastSessionExerciseInTemplate({
-    required String exerciseId,
-    required String? templateId,
-  }) async {
-    final query = db.select(db.sessionExercises).join([
-      innerJoin(
-        db.workoutSessions,
-        db.workoutSessions.id.equalsExp(db.sessionExercises.sessionId),
-      ),
-    ])
-      ..where(db.sessionExercises.exerciseId.equals(exerciseId))
-      ..where(db.workoutSessions.endedAt.isNotNull())
-      ..where(db.workoutSessions.deletedAt.isNull());
-    if (templateId != null) {
-      query.where(db.workoutSessions.templateId.equals(templateId));
-    }
-    query
-      ..orderBy([OrderingTerm.desc(db.workoutSessions.endedAt)])
-      ..limit(1);
-    final rows = await query.get();
-    if (rows.isEmpty) return null;
-    final se = rows.first.readTable(db.sessionExercises);
-    final setRows = await (db.select(db.setEntries)
-          ..where((t) => t.sessionExerciseId.equals(se.id))
-          ..orderBy([(t) => OrderingTerm.asc(t.setIndex)]))
-        .get();
-    return SessionExerciseWithSets(
-      sessionExercise: sessionExerciseFromRow(se),
-      sets: setRows.map(setFromRow).toList(),
-    );
   }
 
   @override

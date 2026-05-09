@@ -16,7 +16,9 @@ create table if not exists public.exercises (
   is_custom boolean not null default true,
   default_increment_kg double precision,
   default_rest_seconds integer,
-  progression_strategy text not null default 'doubleProgression',
+  progressive_overload_enabled boolean not null default true,
+  progression_priority text not null default 'repsFirst',
+  minimum_rpe_threshold integer,
   target_rep_range_min integer not null default 8,
   target_rep_range_max integer not null default 12,
   starting_weight_kg double precision not null default 20.0,
@@ -30,6 +32,25 @@ create table if not exists public.exercises (
   deleted_at timestamptz,
   primary key (user_id, id)
 );
+-- Re-running this file on a project where `exercises` already exists must
+-- still pick up new columns. `create table if not exists` is a no-op then,
+-- so we explicitly add anything that's been introduced after the original
+-- create. Keep this list in sync with the create above.
+alter table public.exercises
+  add column if not exists progressive_overload_enabled
+    boolean not null default true;
+alter table public.exercises
+  add column if not exists progression_priority
+    text not null default 'repsFirst';
+alter table public.exercises
+  add column if not exists minimum_rpe_threshold integer;
+alter table public.exercises
+  add column if not exists use_bodyweight boolean not null default false;
+-- Column removed when the progression refactor landed; drop it if a
+-- pre-refactor Supabase project still has it, otherwise it'd block sync
+-- pushes that no longer reference it.
+alter table public.exercises
+  drop column if exists progression_strategy;
 
 -- ---------------------------- workout_templates ----------------------------
 create table if not exists public.workout_templates (
@@ -77,7 +98,6 @@ create table if not exists public.workout_sessions (
   started_at timestamptz not null,
   ended_at timestamptz,
   notes text,
-  planned_for timestamptz,
   updated_at timestamptz not null,
   remote_id text,
   deleted_at timestamptz,
@@ -222,3 +242,11 @@ create index if not exists set_entries_user_idx
   on public.set_entries (user_id, session_exercise_id);
 create index if not exists bodyweight_user_idx
   on public.bodyweight_entries (user_id, date);
+
+-- ===========================================================================
+-- Force PostgREST to reload its schema cache. Without this, columns added
+-- by the alter table statements above stay invisible to the API for ~10
+-- minutes (or until a project restart) and the app's sync push fails with
+-- PGRST204 ("Could not find the X column ... in the schema cache").
+-- ===========================================================================
+notify pgrst, 'reload schema';

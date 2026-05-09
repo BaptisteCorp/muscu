@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/providers.dart';
+import '../../core/utils/formatters.dart';
 import '../../domain/models/enums.dart';
 import '../../domain/models/exercise.dart';
 
@@ -240,7 +241,7 @@ class _QuickCreateFormState extends ConsumerState<_QuickCreateForm> {
               ),
               items: [
                 for (final m in MuscleGroup.values)
-                  DropdownMenuItem(value: m, child: Text(m.name)),
+                  DropdownMenuItem(value: m, child: Text(muscleLabel(m))),
               ],
               onChanged: (v) => setState(() => _muscle = v!),
             ),
@@ -253,7 +254,7 @@ class _QuickCreateFormState extends ConsumerState<_QuickCreateForm> {
               ),
               items: [
                 for (final e in Equipment.values)
-                  DropdownMenuItem(value: e, child: Text(e.name)),
+                  DropdownMenuItem(value: e, child: Text(e.label)),
               ],
               onChanged: (v) => setState(() => _equipment = v!),
             ),
@@ -268,13 +269,11 @@ class _QuickCreateFormState extends ConsumerState<_QuickCreateForm> {
                 final ex = Exercise(
                   id: _uuid.v4(),
                   name: name,
-                  category: _categoryFor(_muscle),
+                  category: categoryFromMuscle(_muscle),
                   primaryMuscle: _muscle,
                   secondaryMuscles: const [],
                   equipment: _equipment,
                   isCustom: true,
-                  progressionStrategy:
-                      ProgressionStrategyKind.doubleProgression,
                   targetRepRangeMin: 8,
                   targetRepRangeMax: 12,
                   startingWeightKg:
@@ -292,29 +291,4 @@ class _QuickCreateFormState extends ConsumerState<_QuickCreateForm> {
     );
   }
 
-  ExerciseCategory _categoryFor(MuscleGroup m) {
-    switch (m) {
-      case MuscleGroup.chest:
-      case MuscleGroup.shoulders:
-      case MuscleGroup.triceps:
-        return ExerciseCategory.push;
-      case MuscleGroup.upperBack:
-      case MuscleGroup.lats:
-      case MuscleGroup.biceps:
-      case MuscleGroup.forearms:
-      case MuscleGroup.lowerBack:
-      case MuscleGroup.rearDelts:
-        return ExerciseCategory.pull;
-      case MuscleGroup.quads:
-      case MuscleGroup.hamstrings:
-      case MuscleGroup.glutes:
-      case MuscleGroup.calves:
-        return ExerciseCategory.legs;
-      case MuscleGroup.abs:
-      case MuscleGroup.obliques:
-        return ExerciseCategory.core;
-      case MuscleGroup.cardio:
-        return ExerciseCategory.cardio;
-    }
-  }
 }

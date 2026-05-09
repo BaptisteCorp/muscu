@@ -6,7 +6,6 @@ class WorkoutSession {
   final DateTime startedAt;
   final DateTime? endedAt;
   final String? notes;
-  final DateTime? plannedFor;
   final DateTime updatedAt;
   final SyncStatus syncStatus;
   final String? remoteId;
@@ -19,15 +18,13 @@ class WorkoutSession {
     this.templateId,
     this.endedAt,
     this.notes,
-    this.plannedFor,
     this.syncStatus = SyncStatus.pending,
     this.remoteId,
     this.deletedAt,
   });
 
   bool get isFinished => endedAt != null;
-  bool get isPlanned => endedAt == null && plannedFor != null;
-  bool get isInProgress => endedAt == null && plannedFor == null;
+  bool get isInProgress => endedAt == null;
 
   WorkoutSession copyWith({
     String? templateId,
@@ -37,8 +34,6 @@ class WorkoutSession {
     bool clearEndedAt = false,
     String? notes,
     bool clearNotes = false,
-    DateTime? plannedFor,
-    bool clearPlannedFor = false,
     DateTime? updatedAt,
     SyncStatus? syncStatus,
     String? remoteId,
@@ -50,7 +45,6 @@ class WorkoutSession {
       startedAt: startedAt ?? this.startedAt,
       endedAt: clearEndedAt ? null : (endedAt ?? this.endedAt),
       notes: clearNotes ? null : (notes ?? this.notes),
-      plannedFor: clearPlannedFor ? null : (plannedFor ?? this.plannedFor),
       updatedAt: updatedAt ?? this.updatedAt,
       syncStatus: syncStatus ?? this.syncStatus,
       remoteId: remoteId ?? this.remoteId,

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/providers.dart';
+import '../../../core/utils/formatters.dart';
 import '../../../domain/models/enums.dart';
 import '../../../domain/models/exercise.dart';
 
@@ -46,7 +47,7 @@ class _ExercisesTabState extends ConsumerState<ExercisesTab> {
                 items: [
                   const DropdownMenuItem(value: null, child: Text('Tous')),
                   for (final m in MuscleGroup.values)
-                    DropdownMenuItem(value: m, child: Text(_muscleLabel(m))),
+                    DropdownMenuItem(value: m, child: Text(muscleLabel(m))),
                 ],
                 onChanged: (v) => setState(() => _muscle = v),
               ),
@@ -134,7 +135,7 @@ class _ExerciseTile extends ConsumerWidget {
           ),
       ]),
       subtitle: Text(
-        '${_muscleLabel(exercise.primaryMuscle)} • ${_equipmentLabel(exercise.equipment)}',
+        '${muscleLabel(exercise.primaryMuscle)} • ${exercise.equipment.label}',
       ),
       trailing: exercise.isCustom
           ? const Icon(Icons.edit_outlined, size: 18)
@@ -181,30 +182,3 @@ class _Thumbnail extends ConsumerWidget {
   }
 }
 
-String _muscleLabel(MuscleGroup m) => switch (m) {
-      MuscleGroup.chest => 'Pectoraux',
-      MuscleGroup.upperBack => 'Dos (haut)',
-      MuscleGroup.lats => 'Grands dorsaux',
-      MuscleGroup.lowerBack => 'Lombaires',
-      MuscleGroup.shoulders => 'Épaules',
-      MuscleGroup.rearDelts => 'Deltoïdes postérieurs',
-      MuscleGroup.biceps => 'Biceps',
-      MuscleGroup.triceps => 'Triceps',
-      MuscleGroup.forearms => 'Avant-bras',
-      MuscleGroup.quads => 'Quadriceps',
-      MuscleGroup.hamstrings => 'Ischio-jambiers',
-      MuscleGroup.glutes => 'Fessiers',
-      MuscleGroup.calves => 'Mollets',
-      MuscleGroup.abs => 'Abdos',
-      MuscleGroup.obliques => 'Obliques',
-      MuscleGroup.cardio => 'Cardio',
-    };
-
-String _equipmentLabel(Equipment e) => switch (e) {
-      Equipment.barbell => 'Barre',
-      Equipment.dumbbell => 'Haltères',
-      Equipment.machine => 'Machine',
-      Equipment.cable => 'Poulie',
-      Equipment.bodyweight => 'Poids du corps',
-      Equipment.other => 'Autre',
-    };

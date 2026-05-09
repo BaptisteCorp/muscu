@@ -96,9 +96,12 @@ class SyncService {
                   ?.toDouble()),
               defaultRestSeconds:
                   Value(m['default_rest_seconds'] as int?),
-              progressionStrategy: Value(
-                  (m['progression_strategy'] as String?) ??
-                      'doubleProgression'),
+              progressiveOverloadEnabled: Value(
+                  (m['progressive_overload_enabled'] as bool?) ?? true),
+              progressionPriority: Value(
+                  (m['progression_priority'] as String?) ?? 'repsFirst'),
+              minimumRpeThreshold:
+                  Value(m['minimum_rpe_threshold'] as int?),
               targetRepRangeMin: Value(m['target_rep_range_min'] as int? ?? 8),
               targetRepRangeMax:
                   Value(m['target_rep_range_max'] as int? ?? 12),
@@ -224,7 +227,6 @@ class SyncService {
               startedAt: DateTime.parse(m['started_at'] as String).toLocal(),
               endedAt: Value(_parseDt(m['ended_at'])),
               notes: Value(m['notes'] as String?),
-              plannedFor: Value(_parseDt(m['planned_for'])),
               updatedAt: cloudUpdatedAt,
               syncStatus: const Value('synced'),
               remoteId: Value(m['remote_id'] as String?),
@@ -377,7 +379,9 @@ class SyncService {
               'is_custom': r.isCustom,
               'default_increment_kg': r.defaultIncrementKg,
               'default_rest_seconds': r.defaultRestSeconds,
-              'progression_strategy': r.progressionStrategy,
+              'progressive_overload_enabled': r.progressiveOverloadEnabled,
+              'progression_priority': r.progressionPriority,
+              'minimum_rpe_threshold': r.minimumRpeThreshold,
               'target_rep_range_min': r.targetRepRangeMin,
               'target_rep_range_max': r.targetRepRangeMax,
               'starting_weight_kg': r.startingWeightKg,
@@ -457,6 +461,91 @@ class SyncService {
     report.pushed('template_exercise_sets', rows.length);
   }
 
+  /// Push a single workout_session row to the cloud, blocking until done.
+  ///
+  /// Called from critical UX paths (e.g. soft-delete) where we can't risk
+  /// the change being lost if the next batched sync fails on another
+  /// table or the app is killed before it runs.
+  Future<void> pushSession(String sessionId) async {
+    if (!isAvailable) return;
+    final uid = _userId!;
+    final row = await (_db.select(_db.workoutSessions)
+          ..where((t) => t.id.equals(sessionId)))
+        .getSingleOrNull();
+    if (row == null) return;
+    await _sb.from('workout_sessions').upsert({
+      'id': row.id,
+      'user_id': uid,
+      'template_id': row.templateId,
+      'started_at': _isoUtc(row.startedAt),
+      'ended_at': _isoUtcN(row.endedAt),
+      'notes': row.notes,
+      'updated_at': _isoUtc(row.updatedAt),
+      'remote_id': row.remoteId,
+      'deleted_at': _isoUtcN(row.deletedAt),
+    }, onConflict: 'user_id,id');
+  }
+
+  /// Push a session row + every session_exercise and set_entry that hangs
+  /// off it. Used at session finish so the freshly-completed workout is
+  /// safe on the cloud before the user can do anything destructive (close
+  /// the app, reinstall, lose the device).
+  Future<void> pushSessionWithChildren(String sessionId) async {
+    if (!isAvailable) return;
+    final uid = _userId!;
+    await pushSession(sessionId);
+    final exRows = await (_db.select(_db.sessionExercises)
+          ..where((t) => t.sessionId.equals(sessionId)))
+        .get();
+    if (exRows.isEmpty) return;
+    final now = _isoUtc(DateTime.now());
+    await _sb.from('session_exercises').upsert(
+      [
+        for (final r in exRows)
+          {
+            'id': r.id,
+            'user_id': uid,
+            'session_id': r.sessionId,
+            'exercise_id': r.exerciseId,
+            'order_index': r.orderIndex,
+            'rest_seconds': r.restSeconds,
+            'superset_group_id': r.supersetGroupId,
+            'note': r.note,
+            'replaced_from_session_exercise_id':
+                r.replacedFromSessionExerciseId,
+            'updated_at': now,
+          }
+      ],
+      onConflict: 'user_id,id',
+    );
+    final exIds = exRows.map((r) => r.id).toList();
+    final setRows = await (_db.select(_db.setEntries)
+          ..where((t) => t.sessionExerciseId.isIn(exIds)))
+        .get();
+    if (setRows.isEmpty) return;
+    await _sb.from('set_entries').upsert(
+      [
+        for (final r in setRows)
+          {
+            'id': r.id,
+            'user_id': uid,
+            'session_exercise_id': r.sessionExerciseId,
+            'set_index': r.setIndex,
+            'reps': r.reps,
+            'weight_kg': r.weightKg,
+            'rpe': r.rpe,
+            'rir': r.rir,
+            'rest_seconds': r.restSeconds,
+            'is_warmup': r.isWarmup,
+            'is_failure': r.isFailure,
+            'completed_at': _isoUtc(r.completedAt),
+            'updated_at': _isoUtc(r.completedAt),
+          }
+      ],
+      onConflict: 'user_id,id',
+    );
+  }
+
   Future<void> _pushSessions(String uid, SyncReport report) async {
     final rows = await _db.select(_db.workoutSessions).get();
     if (rows.isEmpty) return;
@@ -468,7 +557,6 @@ class SyncService {
               'started_at': _isoUtc(r.startedAt),
               'ended_at': _isoUtcN(r.endedAt),
               'notes': r.notes,
-              'planned_for': _isoUtcN(r.plannedFor),
               'updated_at': _isoUtc(r.updatedAt),
               'remote_id': r.remoteId,
               'deleted_at': _isoUtcN(r.deletedAt),
@@ -648,3 +736,9 @@ final canSyncProvider = Provider<bool>((ref) {
   ref.watch(authChangesProvider);
   return ref.watch(syncServiceProvider).isAvailable;
 });
+
+/// Last completed sync report. Null until the first sync runs. The auto-sync
+/// in [MusculApp] updates this after every attempt so the UI can surface
+/// failures (otherwise auto-sync errors are completely invisible to the
+/// user and silent data loss is impossible to diagnose).
+final lastSyncReportProvider = StateProvider<SyncReport?>((ref) => null);

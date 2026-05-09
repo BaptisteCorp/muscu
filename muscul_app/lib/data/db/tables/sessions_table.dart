@@ -7,7 +7,6 @@ class WorkoutSessions extends Table {
   DateTimeColumn get startedAt => dateTime()();
   DateTimeColumn get endedAt => dateTime().nullable()();
   TextColumn get notes => text().nullable()();
-  DateTimeColumn get plannedFor => dateTime().nullable()();
   DateTimeColumn get updatedAt => dateTime()();
   TextColumn get syncStatus => text().withDefault(const Constant('pending'))();
   TextColumn get remoteId => text().nullable()();
