@@ -170,7 +170,13 @@ class ProgressionEngine {
   }
 
   /// Mode (poids le plus utilisé). En cas d'égalité on prend le plus lourd.
+  ///
+  /// Returns 0 on an empty list. Callers already filter out warm-up-only
+  /// sessions before calling this, but the guard keeps the function safe
+  /// in case a future caller forgets — `.reduce` on an empty iterable
+  /// would otherwise crash with "Bad state: No element".
   static double _modeWeight(List<SetEntry> workingSets) {
+    if (workingSets.isEmpty) return 0;
     final counts = <double, int>{};
     for (final s in workingSets) {
       counts[s.weightKg] = (counts[s.weightKg] ?? 0) + 1;

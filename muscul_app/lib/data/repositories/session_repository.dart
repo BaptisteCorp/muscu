@@ -19,6 +19,17 @@ abstract class SessionRepository {
 
   Future<void> upsertSession(WorkoutSession s);
   Future<void> softDeleteSession(String id);
+
+  /// Soft-delete every in-progress session (endedAt IS NULL, deletedAt IS
+  /// NULL) except the most-recently-started one. Called at app start to
+  /// purge "phantom" sessions: when the user starts a session and never
+  /// finishes/abandons it (app crash, phone died, just forgot), then later
+  /// starts another, both stay in-progress on the cloud. Abandoning the
+  /// visible one then surfaces the next-stalest as if from nowhere.
+  ///
+  /// Returns the IDs that were soft-deleted so the caller can push them
+  /// to the cloud synchronously.
+  Future<List<String>> pruneStaleInProgress();
   Future<void> upsertSessionExercise(SessionExercise se);
   Future<void> deleteSessionExercise(String id);
   Future<void> upsertSet(SetEntry s);
@@ -179,6 +190,28 @@ class LocalSessionRepository implements SessionRepository {
       updatedAt: Value(now),
       syncStatus: const Value('pending'),
     ));
+  }
+
+  @override
+  Future<List<String>> pruneStaleInProgress() async {
+    final inProgress = await (db.select(db.workoutSessions)
+          ..where((t) => t.endedAt.isNull() & t.deletedAt.isNull())
+          ..orderBy([(t) => OrderingTerm.desc(t.startedAt)]))
+        .get();
+    if (inProgress.length <= 1) return const [];
+    final stale = inProgress.skip(1).toList(); // keep [0], the freshest
+    final now = DateTime.now();
+    final ids = <String>[];
+    for (final s in stale) {
+      await (db.update(db.workoutSessions)..where((t) => t.id.equals(s.id)))
+          .write(WorkoutSessionsCompanion(
+        deletedAt: Value(now),
+        updatedAt: Value(now),
+        syncStatus: const Value('pending'),
+      ));
+      ids.add(s.id);
+    }
+    return ids;
   }
 
   @override

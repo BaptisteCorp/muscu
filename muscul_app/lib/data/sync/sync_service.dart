@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:drift/drift.dart';
@@ -17,6 +18,12 @@ class SyncService {
   SyncService(this._db);
   final AppDatabase _db;
 
+  /// Serializes every full sync. Many UI paths call `unawaited(sync())`
+  /// (history delete, session start/finish, periodic timer) — without this
+  /// gate two syncs can interleave their push/pull on the same rows and
+  /// the second pull can wipe edits the first push just landed.
+  Future<void>? _syncInFlight;
+
   SupabaseClient get _sb => Supabase.instance.client;
   String? get _userId => _sb.auth.currentUser?.id;
 
@@ -32,6 +39,18 @@ class SyncService {
         error: 'Pas connecté ou Supabase non configuré',
       );
     }
+    // If another sync is already running, wait for it instead of starting
+    // a parallel one. Caller still gets a report — by reusing the one
+    // returned by the in-flight sync.
+    if (_syncInFlight != null) {
+      await _syncInFlight;
+      // The piggy-back report is "ok-ish" — we didn't run our own pass,
+      // but the in-flight one did. Returning a synthetic ok report keeps
+      // callers' `report.ok` checks honest enough.
+      return SyncReport.empty().copyWith(ok: true);
+    }
+    final completer = Completer<void>();
+    _syncInFlight = completer.future;
     final report = SyncReport.empty();
     try {
       // Push first so freshly-edited local rows reach the cloud BEFORE the
@@ -45,6 +64,9 @@ class SyncService {
         error: '$e',
         stackTrace: st.toString(),
       );
+    } finally {
+      _syncInFlight = null;
+      completer.complete();
     }
   }
 

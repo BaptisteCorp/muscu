@@ -63,6 +63,20 @@ class _MusculAppState extends ConsumerState<MusculApp>
       // a failing sync silently swallows the error and the user thinks
       // their data is gone.
       ref.read(lastSyncReportProvider.notifier).state = report;
+      // After the pull lands, prune phantom in-progress sessions: more than
+      // one session with endedAt IS NULL is always wrong (you can only do
+      // one workout at a time), and abandoning the visible one would
+      // otherwise just surface the next-stalest. Run after sync so we
+      // include any sessions just pulled from the cloud.
+      final stale = await ref
+          .read(sessionRepositoryProvider)
+          .pruneStaleInProgress();
+      // Push each pruned deletion synchronously so it can't be lost.
+      for (final id in stale) {
+        try {
+          await svc.pushSession(id);
+        } catch (_) {/* periodic sync will retry */}
+      }
     } catch (e, st) {
       ref.read(lastSyncReportProvider.notifier).state = SyncReport(
         ok: false,

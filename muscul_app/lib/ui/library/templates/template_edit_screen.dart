@@ -50,20 +50,27 @@ class _TemplateEditScreenState extends ConsumerState<TemplateEditScreen> {
   }
 
   Future<void> _load() async {
-    final id = widget.templateId;
-    if (id != null) {
-      final detail =
-          await ref.read(templateRepositoryProvider).getWithExercises(id);
-      if (detail != null) {
-        _initial = detail.template;
-        _nameCtrl.text = detail.template.name;
-        _notesCtrl.text = detail.template.notes ?? '';
-        _exercises = [...detail.exercises];
+    try {
+      final id = widget.templateId;
+      if (id != null) {
+        final detail =
+            await ref.read(templateRepositoryProvider).getWithExercises(id);
+        if (detail != null) {
+          _initial = detail.template;
+          _nameCtrl.text = detail.template.name;
+          _notesCtrl.text = detail.template.notes ?? '';
+          _exercises = [...detail.exercises];
+        }
       }
+    } finally {
+      // Always exit the loading spinner, even if the load threw — otherwise
+      // the screen is stuck on a CircularProgressIndicator with no recovery.
+      // Listeners above may have flipped _dirty during the controller text
+      // assignments; reset so a clean load doesn't trigger the discard
+      // dialog on a back-press.
+      _dirty = false;
+      if (mounted) setState(() => _loading = false);
     }
-    // Listeners above flipped _dirty during initial population — reset it.
-    _dirty = false;
-    setState(() => _loading = false);
   }
 
   /// Persists the template + its exercises. Returns true on success.
@@ -185,8 +192,9 @@ class _TemplateEditScreenState extends ConsumerState<TemplateEditScreen> {
     );
     if (picked == null || !mounted) return;
     final teId = _uuid.v4();
-    // Sensible default plan: 3 sets × 8 reps, weight=0 if bodyweight or
-    // unknown.
+    // Sensible default plan: 3 sets × repMin reps @ exercise's starting
+    // weight (null for bodyweight). Falls back to history if available
+    // (prefillFromHistory below).
     final defaultPlan = TemplateExerciseWithSets(
       exercise: WorkoutTemplateExercise(
         id: teId,
@@ -202,8 +210,9 @@ class _TemplateEditScreenState extends ConsumerState<TemplateEditScreen> {
             id: _uuid.v4(),
             templateExerciseId: teId,
             setIndex: i,
-            plannedReps: 8,
-            plannedWeightKg: picked.useBodyweight ? null : 20,
+            plannedReps: picked.targetRepRangeMin,
+            plannedWeightKg:
+                picked.useBodyweight ? null : picked.startingWeightKg,
           ),
       ],
     );
@@ -696,7 +705,18 @@ class _PlanEditorSheetState extends ConsumerState<_PlanEditorSheet> {
     super.initState();
     _sets = widget.initial.sets.map((s) => s.copyWith()).toList();
     if (_sets.isEmpty) {
-      _sets = [_makeSet(0, 8, widget.exercise.useBodyweight ? null : 20)];
+      // Fallback default if the parent didn't seed the plan: use the
+      // exercise's own starting weight + repMin so a 80kg-starting exercise
+      // doesn't default to 20kg.
+      _sets = [
+        _makeSet(
+          0,
+          widget.exercise.targetRepRangeMin,
+          widget.exercise.useBodyweight
+              ? null
+              : widget.exercise.startingWeightKg,
+        ),
+      ];
     }
     _restSeconds = widget.initial.exercise.restSeconds ?? 90;
     _sameForAll = _sets.every((s) =>

@@ -82,44 +82,49 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
   }
 
   Future<void> _load() async {
-    final id = widget.exerciseId;
-    // .get() returns the singleton settings row directly; using .watch().first
-    // would couple loading to a stream emission, which makes widget tests
-    // flake when the fake clock doesn't drive real I/O timers.
-    final settings = await ref.read(settingsRepositoryProvider).get();
-    final globalIncrement = settings.defaultIncrementKg;
-    if (id == null) {
-      _incrementCtrl.text = fmtKg(globalIncrement);
-      setState(() => _loading = false);
-      return;
+    try {
+      final id = widget.exerciseId;
+      // .get() returns the singleton settings row directly; using .watch().first
+      // would couple loading to a stream emission, which makes widget tests
+      // flake when the fake clock doesn't drive real I/O timers.
+      final settings = await ref.read(settingsRepositoryProvider).get();
+      final globalIncrement = settings.defaultIncrementKg;
+      if (id == null) {
+        _incrementCtrl.text = fmtKg(globalIncrement);
+        return;
+      }
+      final ex = await ref.read(exerciseRepositoryProvider).getById(id);
+      if (ex != null) {
+        _initial = ex;
+        _nameCtrl.text = ex.name;
+        _notesCtrl.text = ex.notes ?? '';
+        _machineModelCtrl.text = ex.machineBrandModel ?? '';
+        _machineSettingsCtrl.text = ex.machineSettings ?? '';
+        _repMinCtrl.text = ex.targetRepRangeMin.toString();
+        _repMaxCtrl.text = ex.targetRepRangeMax.toString();
+        _startingWeightCtrl.text = ex.startingWeightKg.toString();
+        _incrementCtrl.text =
+            fmtKg(ex.defaultIncrementKg ?? globalIncrement);
+        _restCtrl.text = ex.defaultRestSeconds?.toString() ?? '';
+        _primary = ex.primaryMuscle;
+        _secondary
+          ..clear()
+          ..addAll(ex.secondaryMuscles);
+        _equipment = ex.equipment;
+        _progressiveOverloadEnabled = ex.progressiveOverloadEnabled;
+        _priority = ex.progressionPriority;
+        _rpeThresholdCtrl.text = ex.minimumRpeThreshold?.toString() ?? '';
+        _useBodyweight = ex.useBodyweight;
+        _photoPath = ex.photoPath;
+      }
+    } finally {
+      // Always exit loading even if anything above threw — leaving the
+      // screen stuck on a CircularProgressIndicator is the worst outcome.
+      // Listeners flipped _dirty during the controller text assignments;
+      // reset so a clean load doesn't trigger the discard dialog.
+      _dirty = false;
+      if (mounted) setState(() => _loading = false);
     }
-    final ex = await ref.read(exerciseRepositoryProvider).getById(id);
-    if (ex != null) {
-      _initial = ex;
-      _nameCtrl.text = ex.name;
-      _notesCtrl.text = ex.notes ?? '';
-      _machineModelCtrl.text = ex.machineBrandModel ?? '';
-      _machineSettingsCtrl.text = ex.machineSettings ?? '';
-      _repMinCtrl.text = ex.targetRepRangeMin.toString();
-      _repMaxCtrl.text = ex.targetRepRangeMax.toString();
-      _startingWeightCtrl.text = ex.startingWeightKg.toString();
-      _incrementCtrl.text =
-          fmtKg(ex.defaultIncrementKg ?? globalIncrement);
-      _restCtrl.text = ex.defaultRestSeconds?.toString() ?? '';
-      _primary = ex.primaryMuscle;
-      _secondary
-        ..clear()
-        ..addAll(ex.secondaryMuscles);
-      _equipment = ex.equipment;
-      _progressiveOverloadEnabled = ex.progressiveOverloadEnabled;
-      _priority = ex.progressionPriority;
-      _rpeThresholdCtrl.text = ex.minimumRpeThreshold?.toString() ?? '';
-      _useBodyweight = ex.useBodyweight;
-      _photoPath = ex.photoPath;
-    }
-    // Listeners flipped _dirty during initial population — reset.
-    _dirty = false;
-    setState(() => _loading = false);
   }
 
   /// Identité (nom, muscles, équipement, photo, notes, machine) des exos
