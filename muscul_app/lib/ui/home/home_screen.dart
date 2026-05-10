@@ -7,6 +7,7 @@ import '../../core/providers.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../data/auth/auth_service.dart';
+import '../../data/sync/sync_service.dart';
 import '../../domain/models/bodyweight_entry.dart';
 import '../../domain/models/session.dart';
 import '../../domain/models/workout_template.dart';
@@ -446,6 +447,9 @@ class _SettingsSheet extends ConsumerWidget {
                 await ref
                     .read(settingsRepositoryProvider)
                     .save(s.copyWith(useRirInsteadOfRpe: v));
+                try {
+                  await ref.read(syncServiceProvider).pushSettings();
+                } catch (_) {/* later sync will retry */}
               },
             ),
             ListTile(
@@ -472,13 +476,19 @@ class _SettingsSheet extends ConsumerWidget {
                       // Settings in sync — the bodyweight entries stream
                       // is the single source of truth.
                       final today = DateTime.now();
+                      final dateStr = BodyweightEntry.formatDate(today);
                       await ref.read(bodyweightRepositoryProvider).upsert(
                             BodyweightEntry(
-                              date: BodyweightEntry.formatDate(today),
+                              date: dateStr,
                               weightKg: parsed,
                               updatedAt: today,
                             ),
                           );
+                      try {
+                        await ref
+                            .read(syncServiceProvider)
+                            .pushBodyweight(dateStr);
+                      } catch (_) {/* later sync will retry */}
                     } else {
                       // User cleared the field → drop the cached weight
                       // (does not touch logged history).
@@ -488,6 +498,9 @@ class _SettingsSheet extends ConsumerWidget {
                               clearUserBodyweightKg: true,
                             ),
                           );
+                      try {
+                        await ref.read(syncServiceProvider).pushSettings();
+                      } catch (_) {/* later sync will retry */}
                     }
                   },
                 ),

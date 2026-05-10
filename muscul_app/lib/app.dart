@@ -19,7 +19,6 @@ class MusculApp extends ConsumerStatefulWidget {
 
 class _MusculAppState extends ConsumerState<MusculApp>
     with WidgetsBindingObserver {
-  Timer? _syncTimer;
   bool _syncInFlight = false;
   String? _lastUserId;
 
@@ -32,16 +31,15 @@ class _MusculAppState extends ConsumerState<MusculApp>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _trySync(reason: 'app start');
     });
-    // Periodic safety net while the app stays open.
-    _syncTimer = Timer.periodic(const Duration(minutes: 3), (_) {
-      _trySync(reason: 'periodic');
-    });
+    // No periodic timer: every write action pushes synchronously to the
+    // cloud (see SyncService.pushXxx methods). The full bidirectional
+    // sync runs only on app start, on login, and on resume — which is
+    // when the user could conceivably have edits from another device.
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _syncTimer?.cancel();
     super.dispose();
   }
 

@@ -157,6 +157,10 @@ final bodyweightSettingsSyncProvider = Provider<void>((ref) {
       final settings = await repo.get();
       if (settings.userBodyweightKg == latestKg) return;
       await repo.save(settings.copyWith(userBodyweightKg: latestKg));
+      // The settings push happens at the call sites that *trigger* a
+      // bodyweight change (Home > poids field, Progression > Poids); we
+      // can't push from here without circular import (sync_service.dart
+      // depends on providers.dart for databaseProvider).
     },
   );
 });

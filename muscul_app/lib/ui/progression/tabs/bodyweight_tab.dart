@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/providers.dart';
+import '../../../data/sync/sync_service.dart';
 import '../../../domain/models/bodyweight_entry.dart';
 
 /// Onglet "Poids" : courbe poids du corps (saisies brutes + moyenne 7j),
@@ -345,8 +346,14 @@ class _BodyweightTile extends ConsumerWidget {
             ) ??
             false;
       },
-      onDismissed: (_) =>
-          ref.read(bodyweightRepositoryProvider).delete(entry.date),
+      onDismissed: (_) async {
+        await ref.read(bodyweightRepositoryProvider).delete(entry.date);
+        try {
+          await ref
+              .read(syncServiceProvider)
+              .pushBodyweight(entry.date, delete: true);
+        } catch (_) {/* later sync will retry */}
+      },
       child: Card(
         child: ListTile(
           dense: true,
@@ -452,14 +459,20 @@ Future<void> _logBodyweight(
                       );
                       return;
                     }
+                    final dateStr = BodyweightEntry.formatDate(date);
                     await repo.upsert(BodyweightEntry(
-                      date: BodyweightEntry.formatDate(date),
+                      date: dateStr,
                       weightKg: v,
                       note: noteCtrl.text.trim().isEmpty
                           ? null
                           : noteCtrl.text.trim(),
                       updatedAt: DateTime.now(),
                     ));
+                    try {
+                      await ref
+                          .read(syncServiceProvider)
+                          .pushBodyweight(dateStr);
+                    } catch (_) {/* later sync will retry */}
                     if (sheetCtx.mounted) {
                       Navigator.pop(sheetCtx, true);
                     }

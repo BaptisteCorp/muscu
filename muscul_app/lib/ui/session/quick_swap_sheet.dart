@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../core/providers.dart';
 import '../../core/utils/formatters.dart';
+import '../../data/sync/sync_service.dart';
 import '../../domain/models/enums.dart';
 import '../../domain/models/exercise.dart';
 
@@ -281,6 +282,9 @@ class _QuickCreateFormState extends ConsumerState<_QuickCreateForm> {
                   updatedAt: DateTime.now(),
                 );
                 await ref.read(exerciseRepositoryProvider).upsert(ex);
+                try {
+                  await ref.read(syncServiceProvider).pushExercise(ex.id);
+                } catch (_) {/* later sync will retry */}
                 if (mounted) Navigator.pop(context, ex);
               },
               child: const Text('Créer & substituer'),

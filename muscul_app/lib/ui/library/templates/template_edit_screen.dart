@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import '../../../core/providers.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../data/repositories/template_repository.dart';
+import '../../../data/sync/sync_service.dart';
 import '../../../domain/models/enums.dart';
 import '../../../domain/models/exercise.dart';
 import '../../../domain/models/workout_template.dart';
@@ -108,6 +109,12 @@ class _TemplateEditScreenState extends ConsumerState<TemplateEditScreen> {
     ];
     await repo.setTemplateExercises(id, reordered);
     _dirty = false;
+    // Push synchronously so this template can't be lost between local
+    // save and the next batched sync (3-min timer). Best-effort: if the
+    // network is down, the periodic sync will retry.
+    try {
+      await ref.read(syncServiceProvider).pushTemplate(id);
+    } catch (_) {/* periodic sync will retry */}
     return true;
   }
 
@@ -177,7 +184,11 @@ class _TemplateEditScreenState extends ConsumerState<TemplateEditScreen> {
       ),
     );
     if (ok == true) {
-      await ref.read(templateRepositoryProvider).softDelete(_initial!.id);
+      final id = _initial!.id;
+      await ref.read(templateRepositoryProvider).softDelete(id);
+      try {
+        await ref.read(syncServiceProvider).pushTemplate(id);
+      } catch (_) {/* periodic sync will retry */}
       if (mounted) context.pop();
     }
   }

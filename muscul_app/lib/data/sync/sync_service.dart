@@ -568,6 +568,239 @@ class SyncService {
     );
   }
 
+  /// Push a single template row + every WorkoutTemplateExercise and
+  /// TemplateExerciseSet that hangs off it. Called from edit screens so
+  /// new/edited/deleted templates land on the cloud immediately and can't
+  /// be lost between local save and the next batched sync.
+  Future<void> pushTemplate(String templateId) async {
+    if (!isAvailable) return;
+    final uid = _userId!;
+    final tRow = await (_db.select(_db.workoutTemplates)
+          ..where((t) => t.id.equals(templateId)))
+        .getSingleOrNull();
+    if (tRow == null) return;
+    await _sb.from('workout_templates').upsert({
+      'id': tRow.id,
+      'user_id': uid,
+      'name': tRow.name,
+      'notes': tRow.notes,
+      'created_at': _isoUtc(tRow.createdAt),
+      'updated_at': _isoUtc(tRow.updatedAt),
+      'remote_id': tRow.remoteId,
+      'deleted_at': _isoUtcN(tRow.deletedAt),
+    }, onConflict: 'user_id,id');
+    final teRows = await (_db.select(_db.workoutTemplateExercises)
+          ..where((t) => t.templateId.equals(templateId)))
+        .get();
+    if (teRows.isNotEmpty) {
+      await _sb.from('workout_template_exercises').upsert(
+        [
+          for (final r in teRows)
+            {
+              'id': r.id,
+              'user_id': uid,
+              'template_id': r.templateId,
+              'exercise_id': r.exerciseId,
+              'order_index': r.orderIndex,
+              'target_sets': r.targetSets,
+              'rest_seconds': r.restSeconds,
+            }
+        ],
+        onConflict: 'user_id,id',
+      );
+      final teIds = teRows.map((r) => r.id).toList();
+      final setRows = await (_db.select(_db.templateExerciseSets)
+            ..where((t) => t.templateExerciseId.isIn(teIds)))
+          .get();
+      if (setRows.isNotEmpty) {
+        await _sb.from('template_exercise_sets').upsert(
+          [
+            for (final r in setRows)
+              {
+                'id': r.id,
+                'user_id': uid,
+                'template_exercise_id': r.templateExerciseId,
+                'set_index': r.setIndex,
+                'planned_reps': r.plannedReps,
+                'planned_weight_kg': r.plannedWeightKg,
+              }
+          ],
+          onConflict: 'user_id,id',
+        );
+      }
+    }
+  }
+
+  /// Push a single exercise row to the cloud immediately. Same rationale
+  /// as pushTemplate: don't wait for the periodic batched sync — a fresh
+  /// custom exercise can be lost if the user reinstalls or the app dies
+  /// before the next sync window. Default seeded exercises (is_custom=false)
+  /// are skipped because they're identical for every user and never go
+  /// to the cloud.
+  Future<void> pushExercise(String exerciseId) async {
+    if (!isAvailable) return;
+    final uid = _userId!;
+    final row = await (_db.select(_db.exercises)
+          ..where((t) => t.id.equals(exerciseId)))
+        .getSingleOrNull();
+    if (row == null || !row.isCustom) return;
+    await _sb.from('exercises').upsert({
+      'id': row.id,
+      'user_id': uid,
+      'name': row.name,
+      'category': row.category,
+      'primary_muscle': row.primaryMuscle,
+      'secondary_muscles': row.secondaryMuscles,
+      'equipment': row.equipment,
+      'is_custom': row.isCustom,
+      'default_increment_kg': row.defaultIncrementKg,
+      'default_rest_seconds': row.defaultRestSeconds,
+      'progressive_overload_enabled': row.progressiveOverloadEnabled,
+      'progression_priority': row.progressionPriority,
+      'minimum_rpe_threshold': row.minimumRpeThreshold,
+      'target_rep_range_min': row.targetRepRangeMin,
+      'target_rep_range_max': row.targetRepRangeMax,
+      'starting_weight_kg': row.startingWeightKg,
+      'use_bodyweight': row.useBodyweight,
+      'notes': row.notes,
+      'machine_brand_model': row.machineBrandModel,
+      'machine_settings': row.machineSettings,
+      'photo_path': row.photoPath,
+      'updated_at': _isoUtc(row.updatedAt),
+      'remote_id': row.remoteId,
+      'deleted_at': _isoUtcN(row.deletedAt),
+    }, onConflict: 'user_id,id');
+  }
+
+  /// Push a single session_exercise row. Used when the user adds or
+  /// reorders an exercise mid-session, swaps one out, or edits its rest
+  /// seconds — anything that mutates a single row in `session_exercises`.
+  Future<void> pushSessionExercise(String sessionExerciseId) async {
+    if (!isAvailable) return;
+    final uid = _userId!;
+    final row = await (_db.select(_db.sessionExercises)
+          ..where((t) => t.id.equals(sessionExerciseId)))
+        .getSingleOrNull();
+    if (row == null) return;
+    await _sb.from('session_exercises').upsert({
+      'id': row.id,
+      'user_id': uid,
+      'session_id': row.sessionId,
+      'exercise_id': row.exerciseId,
+      'order_index': row.orderIndex,
+      'rest_seconds': row.restSeconds,
+      'superset_group_id': row.supersetGroupId,
+      'note': row.note,
+      'replaced_from_session_exercise_id':
+          row.replacedFromSessionExerciseId,
+      'updated_at': _isoUtc(DateTime.now()),
+    }, onConflict: 'user_id,id');
+  }
+
+  /// Push a single set_entry row. Used after every validate / edit so the
+  /// freshly-logged set survives an immediate app death.
+  Future<void> pushSet(String setId) async {
+    if (!isAvailable) return;
+    final uid = _userId!;
+    final row = await (_db.select(_db.setEntries)
+          ..where((t) => t.id.equals(setId)))
+        .getSingleOrNull();
+    if (row == null) return;
+    await _sb.from('set_entries').upsert({
+      'id': row.id,
+      'user_id': uid,
+      'session_exercise_id': row.sessionExerciseId,
+      'set_index': row.setIndex,
+      'reps': row.reps,
+      'weight_kg': row.weightKg,
+      'rpe': row.rpe,
+      'rir': row.rir,
+      'rest_seconds': row.restSeconds,
+      'is_warmup': row.isWarmup,
+      'is_failure': row.isFailure,
+      'completed_at': _isoUtc(row.completedAt),
+      'updated_at': _isoUtc(DateTime.now()),
+    }, onConflict: 'user_id,id');
+  }
+
+  /// Hard-delete a set on the cloud. Local DB hard-deletes too (no
+  /// tombstone column on `set_entries` either side).
+  Future<void> deleteSetOnCloud(String setId) async {
+    if (!isAvailable) return;
+    final uid = _userId!;
+    await _sb
+        .from('set_entries')
+        .delete()
+        .eq('user_id', uid)
+        .eq('id', setId);
+  }
+
+  /// Hard-delete a session_exercise + every set_entry that hangs off it
+  /// on the cloud. Mirrors the local cascade in
+  /// `SessionRepository.deleteSessionExercise`.
+  Future<void> deleteSessionExerciseOnCloud(String sessionExerciseId) async {
+    if (!isAvailable) return;
+    final uid = _userId!;
+    // Sets first to mirror the local order — and so an interrupted call
+    // doesn't leave orphan sets on the cloud after the parent vanishes.
+    await _sb
+        .from('set_entries')
+        .delete()
+        .eq('user_id', uid)
+        .eq('session_exercise_id', sessionExerciseId);
+    await _sb
+        .from('session_exercises')
+        .delete()
+        .eq('user_id', uid)
+        .eq('id', sessionExerciseId);
+  }
+
+  /// Push the current settings singleton.
+  Future<void> pushSettings() async {
+    if (!isAvailable) return;
+    final uid = _userId!;
+    final row = await (_db.select(_db.userSettingsTable)
+          ..where((t) => t.id.equals(1)))
+        .getSingleOrNull();
+    if (row == null) return;
+    await _sb.from('user_settings').upsert({
+      'user_id': uid,
+      'default_increment_kg': row.defaultIncrementKg,
+      'weight_unit': row.weightUnit,
+      'default_rest_seconds': row.defaultRestSeconds,
+      'use_rir_instead_of_rpe': row.useRirInsteadOfRpe,
+      'user_bodyweight_kg': row.userBodyweightKg,
+      'theme_mode': row.themeMode,
+      'updated_at': _isoUtc(DateTime.now()),
+    }, onConflict: 'user_id');
+  }
+
+  /// Push (or hard-delete, when [delete] is true) a single bodyweight
+  /// entry by date.
+  Future<void> pushBodyweight(String date, {bool delete = false}) async {
+    if (!isAvailable) return;
+    final uid = _userId!;
+    if (delete) {
+      await _sb
+          .from('bodyweight_entries')
+          .delete()
+          .eq('user_id', uid)
+          .eq('date', date);
+      return;
+    }
+    final row = await (_db.select(_db.bodyweightEntries)
+          ..where((t) => t.date.equals(date)))
+        .getSingleOrNull();
+    if (row == null) return;
+    await _sb.from('bodyweight_entries').upsert({
+      'user_id': uid,
+      'date': row.date,
+      'weight_kg': row.weightKg,
+      'note': row.note,
+      'updated_at': _isoUtc(row.updatedAt),
+    }, onConflict: 'user_id,date');
+  }
+
   Future<void> _pushSessions(String uid, SyncReport report) async {
     final rows = await _db.select(_db.workoutSessions).get();
     if (rows.isEmpty) return;

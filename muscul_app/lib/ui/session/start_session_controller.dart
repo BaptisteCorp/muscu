@@ -45,8 +45,11 @@ class StartSessionController {
         }
       }
     }
-    // Best-effort cloud backup of the freshly-created session shell.
-    unawaited(ref.read(syncServiceProvider).sync());
+    // Push session + its session_exercises synchronously so the freshly-
+    // created session shell can't be lost if the app dies right after start.
+    try {
+      await ref.read(syncServiceProvider).pushSessionWithChildren(id);
+    } catch (_) {/* next sync on resume/login will retry */}
     return id;
   }
 }
@@ -74,5 +77,10 @@ Future<String> addExerciseToSession({
           replacedFromSessionExerciseId: replacedFromSessionExerciseId,
         ),
       );
+  // Push this single row so a fresh quick-swap / freestyle add survives an
+  // app death immediately after.
+  try {
+    await ref.read(syncServiceProvider).pushSessionExercise(id);
+  } catch (_) {/* sync on resume/login will retry */}
   return id;
 }

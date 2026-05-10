@@ -781,6 +781,12 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
     setState(() {
       _pending[item.sessionExercise.id]?.remove(setPos);
     });
+    // Push the validated set immediately so a freshly-logged set survives
+    // an app death right after.
+    final svc = ref.read(syncServiceProvider);
+    try {
+      await svc.pushSet(entry.id);
+    } catch (_) {/* later sync will retry */}
     // Ratchet: if this session was started from a template, sync the
     // validated set's reps/weight back into the template so the user
     // sees the latest progression next time they look at it or start
@@ -794,6 +800,9 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
             reps: entry.reps,
             weightKg: entry.weightKg,
           );
+      try {
+        await svc.pushTemplate(templateId);
+      } catch (_) {/* later sync will retry */}
     }
   }
 
@@ -805,6 +814,9 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
     );
     if (updated != null) {
       await ref.read(sessionRepositoryProvider).upsertSet(updated);
+      try {
+        await ref.read(syncServiceProvider).pushSet(updated.id);
+      } catch (_) {/* later sync will retry */}
     }
   }
 
@@ -819,7 +831,13 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
     if (picked == null) return;
     final repo = ref.read(sessionRepositoryProvider);
     if (item.sets.isEmpty) {
-      await repo.deleteSessionExercise(item.sessionExercise.id);
+      final removedId = item.sessionExercise.id;
+      await repo.deleteSessionExercise(removedId);
+      try {
+        await ref
+            .read(syncServiceProvider)
+            .deleteSessionExerciseOnCloud(removedId);
+      } catch (_) {/* later sync will retry */}
       await addExerciseToSession(
         ref: ref,
         sessionId: widget.sessionId,
@@ -869,18 +887,30 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
     final prev = items[index - 1].sessionExercise;
     // Use the previous exo's group if it has one, else create a new uuid.
     final groupId = prev.supersetGroupId ?? _uuid.v4();
+    final svc = ref.read(syncServiceProvider);
     if (prev.supersetGroupId == null) {
       await repo.upsertSessionExercise(
           prev.copyWith(supersetGroupId: groupId));
+      try {
+        await svc.pushSessionExercise(prev.id);
+      } catch (_) {/* later sync will retry */}
     }
     await repo.upsertSessionExercise(
         current.copyWith(supersetGroupId: groupId));
+    try {
+      await svc.pushSessionExercise(current.id);
+    } catch (_) {/* later sync will retry */}
   }
 
   Future<void> _leaveSuperset(SessionExerciseWithSets item) async {
     final repo = ref.read(sessionRepositoryProvider);
     await repo.upsertSessionExercise(item.sessionExercise
         .copyWith(clearSupersetGroupId: true));
+    try {
+      await ref
+          .read(syncServiceProvider)
+          .pushSessionExercise(item.sessionExercise.id);
+    } catch (_) {/* later sync will retry */}
   }
 
   Future<void> _editSessionNote() async {
@@ -940,6 +970,9 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
       updatedAt: DateTime.now(),
     );
     await repo.upsertSession(updated);
+    try {
+      await ref.read(syncServiceProvider).pushSession(updated.id);
+    } catch (_) {/* later sync will retry */}
   }
 
   Future<void> _finish() async {
@@ -976,9 +1009,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
       await ref
           .read(syncServiceProvider)
           .pushSessionWithChildren(widget.sessionId);
-    } catch (_) {/* best-effort; the periodic sync will retry */}
-    // Background full sync for everything else (settings, bodyweight…).
-    unawaited(ref.read(syncServiceProvider).sync());
+    } catch (_) {/* later sync will retry */}
     if (mounted) {
       context.go('/home');
     }
@@ -1060,6 +1091,9 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
   Future<void> _abandonSession() async {
     final repo = ref.read(sessionRepositoryProvider);
     await repo.softDeleteSession(widget.sessionId);
+    try {
+      await ref.read(syncServiceProvider).pushSession(widget.sessionId);
+    } catch (_) {/* later sync will retry */}
     if (mounted) {
       context.go('/home');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1119,6 +1153,9 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
       clearRestSeconds: result.reset,
     );
     await ref.read(sessionRepositoryProvider).upsertSessionExercise(updated);
+    try {
+      await ref.read(syncServiceProvider).pushSessionExercise(updated.id);
+    } catch (_) {/* later sync will retry */}
   }
 }
 

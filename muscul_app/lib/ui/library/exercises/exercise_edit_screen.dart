@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../../core/providers.dart';
 import '../../../core/utils/formatters.dart';
+import '../../../data/sync/sync_service.dart';
 import '../../../domain/models/enums.dart';
 import '../../../domain/models/exercise.dart';
 
@@ -241,6 +242,12 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
       syncStatus: SyncStatus.pending,
     );
     await ref.read(exerciseRepositoryProvider).upsert(exercise);
+    // Push synchronously so a freshly-created/edited custom exercise can't
+    // be lost between local save and the next batched sync. Best-effort:
+    // if offline, the periodic sync will retry.
+    try {
+      await ref.read(syncServiceProvider).pushExercise(id);
+    } catch (_) {/* periodic sync will retry */}
   }
 
   /// Called when the user navigates back. Auto-save if valid; otherwise ask
@@ -308,7 +315,11 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
       ),
     );
     if (ok == true) {
-      await ref.read(exerciseRepositoryProvider).softDelete(_initial!.id);
+      final id = _initial!.id;
+      await ref.read(exerciseRepositoryProvider).softDelete(id);
+      try {
+        await ref.read(syncServiceProvider).pushExercise(id);
+      } catch (_) {/* periodic sync will retry */}
       if (mounted) context.pop();
     }
   }

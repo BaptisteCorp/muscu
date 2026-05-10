@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/providers.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../data/sync/sync_service.dart';
 import '../../../domain/models/workout_template.dart';
 
 class TemplatesTab extends ConsumerWidget {
@@ -81,8 +82,12 @@ class _TemplateTile extends ConsumerWidget {
         child: Icon(Icons.delete_rounded, color: cs.onError),
       ),
       confirmDismiss: (_) => _confirmDelete(context),
-      onDismissed: (_) =>
-          ref.read(templateRepositoryProvider).softDelete(template.id),
+      onDismissed: (_) async {
+        await ref.read(templateRepositoryProvider).softDelete(template.id);
+        try {
+          await ref.read(syncServiceProvider).pushTemplate(template.id);
+        } catch (_) {/* periodic sync will retry */}
+      },
       child: Material(
         color: cs.surfaceContainer,
         borderRadius: BorderRadius.circular(AppTokens.radiusL),

@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/providers.dart';
 import '../../../core/utils/formatters.dart';
+import '../../../data/sync/sync_service.dart';
 import '../../../domain/models/enums.dart';
 import '../../../domain/models/exercise.dart';
 
@@ -154,8 +155,12 @@ class _ExerciseTile extends ConsumerWidget {
         child: const Icon(Icons.delete, color: Colors.white),
       ),
       confirmDismiss: (_) => _confirmDelete(context),
-      onDismissed: (_) =>
-          ref.read(exerciseRepositoryProvider).softDelete(exercise.id),
+      onDismissed: (_) async {
+        await ref.read(exerciseRepositoryProvider).softDelete(exercise.id);
+        try {
+          await ref.read(syncServiceProvider).pushExercise(exercise.id);
+        } catch (_) {/* periodic sync will retry */}
+      },
       child: tile,
     );
   }

@@ -368,13 +368,9 @@ class _HistoryTile extends ConsumerWidget {
 
   Future<void> _doDelete(WidgetRef ref) async {
     await ref.read(sessionRepositoryProvider).softDeleteSession(session.id);
-    // Push this single deletion synchronously so it can't be lost if the
-    // user reinstalls before the next batched sync runs (and so the
-    // deletion isn't blocked by an unrelated failure on another table).
     try {
       await ref.read(syncServiceProvider).pushSession(session.id);
-    } catch (_) {/* best-effort; the periodic sync will retry */}
-    unawaited(ref.read(syncServiceProvider).sync());
+    } catch (_) {/* later sync will retry */}
   }
 
   @override
@@ -648,7 +644,9 @@ Future<void> _addPastSession(BuildContext context, WidgetRef ref) async {
       }
     }
   }
-  unawaited(ref.read(syncServiceProvider).sync());
+  try {
+    await ref.read(syncServiceProvider).pushSessionWithChildren(id);
+  } catch (_) {/* later sync will retry */}
   if (context.mounted) {
     context.push('/session/$id');
   }
