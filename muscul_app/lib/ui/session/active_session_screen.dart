@@ -24,6 +24,7 @@ import 'pending_set.dart';
 import 'quick_swap_sheet.dart';
 import 'rest_edit_sheet.dart';
 import 'rest_timer.dart';
+import 'set_prefill.dart';
 import 'set_row.dart';
 import 'start_session_controller.dart';
 import 'widgets/exercise_header.dart';
@@ -32,7 +33,6 @@ import 'widgets/nav_exercise_buttons.dart';
 import 'widgets/page_dots.dart';
 import 'widgets/plan_card.dart';
 import 'widgets/session_note_banner.dart';
-import 'widgets/superset_banner.dart';
 
 const _uuid = Uuid();
 
@@ -411,12 +411,18 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
               history: pastHistory,
               settings: settings,
             );
+            // The engine produces a real prescription only when there's at
+            // least one past session with working sets — same condition it
+            // uses internally. Below that, target is just the starting weight.
+            final hasHistory =
+                pastHistory.any((h) => h.sets.any((s) => !s.isWarmup));
             return _exerciseBody(
               items: items,
               index: index,
               item: item,
               exercise: exercise,
               target: target,
+              hasHistory: hasHistory,
               settings: settings,
             );
           },
@@ -431,48 +437,21 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
     required SessionExerciseWithSets item,
     required Exercise exercise,
     required ProgressionTarget target,
+    required bool hasHistory,
     required UserSettings settings,
   }) {
     final increment = exercise.effectiveIncrementKg(settings.defaultIncrementKg);
     final plan = _planByExercise[item.sessionExercise.exerciseId] ?? const [];
 
-    /// Valeurs par défaut de chaque série :
-    ///   1. si une série précédente a déjà été validée dans cette séance,
-    ///      on reprend ses reps/poids — l'utilisateur n'a qu'à saisir une
-    ///      fois s'il dévie du plan (ex. plan à 40kg mais il fait 60kg,
-    ///      les séries 2/3/4 doivent défaulter à 60kg, pas rester à 40kg) ;
-    ///   2. sinon, si le template définit explicitement la série, on prend
-    ///      ses reps/poids — c'est la source de vérité quand l'utilisateur
-    ///      a édité le plan (deload manuel, charge modifiée…) ; le ratchet
-    ///      de `applyValidatedSet` re-bumpe automatiquement le plan vers le
-    ///      haut après chaque série validée plus lourde, donc on n'écrase
-    ///      jamais une vraie progression ;
-    ///   3. sinon on retombe sur le moteur de surcharge progressive (target),
-    ///      utile en freestyle et pour les séries hors-plan.
-    PendingSet defaultFor(int pos) {
-      final lastValidated = item.sets.where((s) => !s.isWarmup).toList();
-      if (lastValidated.isNotEmpty) {
-        final last = lastValidated.last;
-        return PendingSet(
-          reps: last.reps,
-          weight: last.weightKg,
-          rpe: null,
+    // Valeurs par défaut d'une série — logique pure et testée dans
+    // set_prefill.dart (voir computeSetDefault pour la priorité exacte).
+    PendingSet defaultFor(int pos) => computeSetDefault(
+          pos: pos,
+          sessionSets: item.sets,
+          hasHistory: hasHistory,
+          plan: plan,
+          target: target,
         );
-      }
-      if (plan.isNotEmpty) {
-        final planSet = pos < plan.length ? plan[pos] : plan.last;
-        return PendingSet(
-          reps: planSet.plannedReps,
-          weight: planSet.plannedWeightKg ?? target.targetWeightKg,
-          rpe: null,
-        );
-      }
-      return PendingSet(
-        reps: target.targetReps,
-        weight: target.targetWeightKg,
-        rpe: null,
-      );
-    }
 
     /// Returns the (possibly user-edited) values for a given set position.
     PendingSet pendingFor(int pos) =>
@@ -569,31 +548,17 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
       return saved + skipped >= 3;
     });
 
-    final supersetGroupId = item.sessionExercise.supersetGroupId;
-    final partners = supersetGroupId == null
-        ? const <SessionExerciseWithSets>[]
-        : items
-            .where((it) =>
-                it.sessionExercise.id != item.sessionExercise.id &&
-                it.sessionExercise.supersetGroupId == supersetGroupId)
-            .toList();
-
     final cs = Theme.of(context).colorScheme;
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
-        if (supersetGroupId != null) SupersetBanner(
-          partnerCount: partners.length,
-          onLeave: () => _leaveSuperset(item),
-        ),
         // Exercise header: photo + name + actions, all in one cohesive row.
+        // Superset UI is disabled for now — pass no-op so the button hides.
         ExerciseHeader(
           exercise: exercise,
           onSwap: () => _openSwap(item, index),
-          onSuperset: index > 0
-              ? () => _toggleSupersetWithPrevious(items, index)
-              : null,
-          isSuperset: supersetGroupId != null,
+          onSuperset: null,
+          isSuperset: false,
           photoFuture: exercise.photoPath == null
               ? null
               : ref.read(photoStorageProvider).resolve(exercise.photoPath),
@@ -856,34 +821,9 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
     );
   }
 
-  Future<void> _toggleSupersetWithPrevious(
-      List<SessionExerciseWithSets> items, int index) async {
-    if (index <= 0) return;
-    final repo = ref.read(sessionRepositoryProvider);
-    final current = items[index].sessionExercise;
-    final prev = items[index - 1].sessionExercise;
-    // Use the previous exo's group if it has one, else create a new uuid.
-    final groupId = prev.supersetGroupId ?? _uuid.v4();
-    final svc = ref.read(syncServiceProvider);
-    if (prev.supersetGroupId == null) {
-      await repo.upsertSessionExercise(
-          prev.copyWith(supersetGroupId: groupId));
-      svc.pushSessionExercise(prev.id).ignore();
-    }
-    await repo.upsertSessionExercise(
-        current.copyWith(supersetGroupId: groupId));
-    svc.pushSessionExercise(current.id).ignore();
-  }
-
-  Future<void> _leaveSuperset(SessionExerciseWithSets item) async {
-    final repo = ref.read(sessionRepositoryProvider);
-    await repo.upsertSessionExercise(item.sessionExercise
-        .copyWith(clearSupersetGroupId: true));
-    ref
-        .read(syncServiceProvider)
-        .pushSessionExercise(item.sessionExercise.id)
-        .ignore();
-  }
+  // Superset feature disabled for now (new idea pending). The data plumbing
+  // (model field, DB column, sync) is kept intact so existing groups survive
+  // and the UI can be re-enabled later — only the entry points are gone.
 
   Future<void> _editSessionNote() async {
     final repo = ref.read(sessionRepositoryProvider);

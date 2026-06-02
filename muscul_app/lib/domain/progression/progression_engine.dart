@@ -195,7 +195,9 @@ class ProgressionEngine {
     required int? rpeThreshold,
   }) {
     if (workingSets.length < plannedSets) {
-      return const _Validation(false, 'Toutes les séries non terminées');
+      return const _Validation(false,
+          'Toutes les séries n\'ont pas été validées à la dernière séance, '
+          'on reste au même poids');
     }
     final minReps =
         workingSets.map((s) => s.reps).reduce((a, b) => a < b ? a : b);
@@ -209,7 +211,8 @@ class ProgressionEngine {
         final maxRpe =
             ratedSets.map((s) => s.rpe!).reduce((a, b) => a > b ? a : b);
         if (maxRpe > rpeThreshold) {
-          return _Validation(false, 'RPE $maxRpe > seuil $rpeThreshold');
+          return const _Validation(false,
+              'RPE trop haut à la dernière séance pour augmenter à celle-ci');
         }
       }
     }

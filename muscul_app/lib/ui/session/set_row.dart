@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../domain/models/session.dart';
+import 'weight_edit_sheet.dart';
 
 enum SetRowState { completed, active, pending, skipped }
 
@@ -253,6 +254,7 @@ class SetRow extends StatelessWidget {
                             .toDouble(),
                   ),
                   onPlus: () => onWeightChanged(weightKg + incrementKg),
+                  onValueTap: () => _editWeightManually(context),
                 ),
               ),
               const SizedBox(width: 8),
@@ -330,6 +332,20 @@ class SetRow extends StatelessWidget {
     );
   }
 
+  /// Opens the kilo-by-kilo wheel picker for manual weight entry, then pushes
+  /// the chosen value back through [onWeightChanged].
+  Future<void> _editWeightManually(BuildContext context) async {
+    final picked = await showModalBottomSheet<double>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => WeightEditSheet(
+        initialKg: weightKg,
+        allowNegative: bodyweightLabel != null,
+        unitLabel: bodyweightLabel != null ? '+kg' : 'kg',
+      ),
+    );
+    if (picked != null) onWeightChanged(picked);
+  }
 }
 
 class _SetIndexBadge extends StatelessWidget {
@@ -495,12 +511,17 @@ class _BigStepper extends StatelessWidget {
   final VoidCallback onMinus;
   final VoidCallback onPlus;
   final VoidCallback? onInfo;
+
+  /// Tapping the hero value (e.g. to open a manual picker). Adds a subtle
+  /// edit affordance when provided.
+  final VoidCallback? onValueTap;
   const _BigStepper({
     required this.label,
     required this.value,
     required this.onMinus,
     required this.onPlus,
     this.onInfo,
+    this.onValueTap,
   });
 
   @override
@@ -543,21 +564,26 @@ class _BigStepper extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 2),
-          // Hero value — fixed height so all 3 columns line up.
+          // Hero value — fixed height so all 3 columns line up. Tappable when
+          // a manual picker is wired (underlined to hint it).
           SizedBox(
             height: 30,
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.center,
-              child: Text(
-                value,
-                maxLines: 1,
-                style: TextStyle(
-                  fontSize: 26,
-                  height: 1.0,
-                  fontWeight: FontWeight.w900,
-                  color: cs.onSurface,
-                  fontFeatures: const [FontFeature.tabularFigures()],
+            child: GestureDetector(
+              onTap: onValueTap,
+              behavior: HitTestBehavior.opaque,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.center,
+                child: Text(
+                  value,
+                  maxLines: 1,
+                  style: TextStyle(
+                    fontSize: 26,
+                    height: 1.0,
+                    fontWeight: FontWeight.w900,
+                    color: cs.onSurface,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
                 ),
               ),
             ),
