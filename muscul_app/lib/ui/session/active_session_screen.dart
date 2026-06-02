@@ -492,111 +492,76 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
       3,
     ].reduce((a, b) => a > b ? a : b);
 
-    final rows = <Widget>[];
-    var savedConsumed = 0;
-    var firstActiveAssigned = false;
-    for (var pos = 0; pos < totalSlots; pos++) {
-      if (rows.isNotEmpty) rows.add(const Divider(height: 1));
-      if (skipped.contains(pos)) {
-        rows.add(SetRow(
-          setIndex: pos,
-          entry: null,
-          reps: 0,
-          weightKg: 0,
-          rpe: null,
-          incrementKg: increment,
-          state: SetRowState.skipped,
-          useRir: settings.useRirInsteadOfRpe,
-          onRepsChanged: (_) {},
-          onWeightChanged: (_) {},
-          onRpeChanged: (_) {},
-          onValidate: () {},
-          onUnskip: () => setState(() {
-            _skipped[item.sessionExercise.id] = {...skipped}..remove(pos);
-          }),
-        ));
-        continue;
+    // Classify every slot. The whole set sequence is now shown as a single
+    // strip of dots — validated sets are a green check (tap to edit), skipped
+    // a dash (tap to restore), the in-progress one is ringed, upcoming ones
+    // hollow. No per-set rows anymore; only the in-progress set gets the
+    // stepper card below the strip.
+    final slotStates = <SetRowState>[];
+    final slotTaps = <VoidCallback?>[];
+    var activePos = -1;
+    {
+      var consumed = 0;
+      for (var pos = 0; pos < totalSlots; pos++) {
+        if (skipped.contains(pos)) {
+          slotStates.add(SetRowState.skipped);
+          final p = pos;
+          slotTaps.add(() => setState(() {
+                _skipped[item.sessionExercise.id] = {...skipped}..remove(p);
+              }));
+        } else if (consumed < savedCount) {
+          final entry = item.sets[consumed++];
+          slotStates.add(SetRowState.completed);
+          slotTaps.add(() => _editExisting(entry));
+        } else if (activePos < 0) {
+          activePos = pos;
+          slotStates.add(SetRowState.active);
+          slotTaps.add(null);
+        } else {
+          slotStates.add(SetRowState.pending);
+          slotTaps.add(null);
+        }
       }
-      if (savedConsumed < savedCount) {
-        final entry = item.sets[savedConsumed++];
-        rows.add(SetRow(
-          setIndex: pos,
-          entry: entry,
-          reps: entry.reps,
-          weightKg: entry.weightKg,
-          rpe: entry.rpe,
-          incrementKg: increment,
-          state: SetRowState.completed,
-          useRir: settings.useRirInsteadOfRpe,
-          bodyweightLabel: exercise.useBodyweight
-              ? _bodyweightLabel(entry.weightKg, settings)
-              : null,
-          onRepsChanged: (_) {},
-          onWeightChanged: (_) {},
-          onRpeChanged: (_) {},
-          onValidate: () {},
-          onTap: () => _editExisting(entry),
-        ));
-        continue;
-      }
-      if (!firstActiveAssigned) {
-        firstActiveAssigned = true;
-        final p = pendingFor(pos);
-        rows.add(SetRow(
-          setIndex: pos,
-          entry: null,
-          reps: p.reps,
-          weightKg: p.weight,
-          rpe: p.rpe,
-          incrementKg: increment,
-          state: SetRowState.active,
-          useRir: settings.useRirInsteadOfRpe,
-          bodyweightLabel: exercise.useBodyweight
-              ? _bodyweightLabel(p.weight, settings)
-              : null,
-          onRepsChanged: (v) => setState(() {
-            setPendingFor(pos, p.copyWith(reps: v));
-          }),
-          onWeightChanged: (v) => setState(() {
-            setPendingFor(pos, p.copyWith(weight: v));
-          }),
-          onRpeChanged: (v) => setState(() {
-            setPendingFor(pos, p.copyWith(rpe: v));
-          }),
-          onValidate: () => _validateSet(
-              item, p, settings, plannedCount,
-              setPos: pos,
-              restSeconds: item.sessionExercise.restSeconds ??
-                  exercise.effectiveRestSeconds(
-                      settings.defaultRestSeconds)),
-          onSkip: () => setState(() {
-            _skipped[item.sessionExercise.id] = {...skipped, pos};
-          }),
-        ));
-        continue;
-      }
-      // Pending (not yet active) row — show its planned default.
-      final pPreview = pendingFor(pos);
-      rows.add(SetRow(
-        setIndex: pos,
+    }
+    final progressDots = SetProgressDots(states: slotStates, taps: slotTaps);
+
+    // The single stepper card for the set in progress (null once all done).
+    Widget? activeRow;
+    if (activePos >= 0) {
+      final p = pendingFor(activePos);
+      activeRow = SetRow(
+        setIndex: activePos,
         entry: null,
-        reps: pPreview.reps,
-        weightKg: pPreview.weight,
-        rpe: pPreview.rpe,
+        reps: p.reps,
+        weightKg: p.weight,
+        rpe: p.rpe,
         incrementKg: increment,
-        state: SetRowState.pending,
+        state: SetRowState.active,
         useRir: settings.useRirInsteadOfRpe,
-        onRepsChanged: (_) {},
-        onWeightChanged: (_) {},
-        onRpeChanged: (_) {},
-        onValidate: () {},
-        onSkip: () => setState(() {
-          _skipped[item.sessionExercise.id] = {...skipped, pos};
+        bodyweightLabel: exercise.useBodyweight
+            ? _bodyweightLabel(p.weight, settings)
+            : null,
+        onRepsChanged: (v) => setState(() {
+          setPendingFor(activePos, p.copyWith(reps: v));
         }),
-      ));
+        onWeightChanged: (v) => setState(() {
+          setPendingFor(activePos, p.copyWith(weight: v));
+        }),
+        onRpeChanged: (v) => setState(() {
+          setPendingFor(activePos, p.copyWith(rpe: v));
+        }),
+        onValidate: () => _validateSet(
+            item, p, settings, plannedCount,
+            setPos: activePos,
+            restSeconds: item.sessionExercise.restSeconds ??
+                exercise.effectiveRestSeconds(settings.defaultRestSeconds)),
+        onSkip: () => setState(() {
+          _skipped[item.sessionExercise.id] = {...skipped, activePos};
+        }),
+      );
     }
 
-    final allDone = !firstActiveAssigned;
+    final allDone = activePos < 0;
     final allExercisesDone = items.every((it) {
       final saved = it.sets.length;
       final skipped =
@@ -675,7 +640,18 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
           clipBehavior: Clip.antiAlias,
           child: Column(
             children: [
-              for (var i = 0; i < rows.length; i++) rows[i],
+              // Progress strip — a dot per set, the whole sequence at a glance.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: progressDots,
+                ),
+              ),
+              if (activeRow != null) ...[
+                const Divider(height: 1),
+                activeRow,
+              ],
               if (allDone) Container(
                 color: AppTokens.successGreen.withOpacity(0.10),
                 padding: const EdgeInsets.all(14),
@@ -701,27 +677,36 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
           ),
         ),
         const SizedBox(height: 12),
+        // Two equal-width halves so the buttons sit symmetrically and never
+        // overlap, whatever the exercise names' length. An empty slot keeps
+        // the lone button (first / last exo) on its own side.
         Row(
           children: [
-            if (index > 0)
-              PrevExerciseButton(
-                previousExerciseId:
-                    items[index - 1].sessionExercise.exerciseId,
-                onPressed: () => _pageCtrl.previousPage(
-                  duration: const Duration(milliseconds: 250),
-                  curve: Curves.easeOut,
-                ),
-              ),
-            const Spacer(),
-            if (index < items.length - 1)
-              NextExerciseButton(
-                nextExerciseId:
-                    items[index + 1].sessionExercise.exerciseId,
-                onPressed: () => _pageCtrl.nextPage(
-                  duration: const Duration(milliseconds: 250),
-                  curve: Curves.easeOut,
-                ),
-              ),
+            Expanded(
+              child: index > 0
+                  ? PrevExerciseButton(
+                      previousExerciseId:
+                          items[index - 1].sessionExercise.exerciseId,
+                      onPressed: () => _pageCtrl.previousPage(
+                        duration: const Duration(milliseconds: 250),
+                        curve: Curves.easeOut,
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: index < items.length - 1
+                  ? NextExerciseButton(
+                      nextExerciseId:
+                          items[index + 1].sessionExercise.exerciseId,
+                      onPressed: () => _pageCtrl.nextPage(
+                        duration: const Duration(milliseconds: 250),
+                        curve: Curves.easeOut,
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
           ],
         ),
         if (allExercisesDone) ...[

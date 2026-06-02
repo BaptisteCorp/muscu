@@ -67,12 +67,12 @@ class _NavExerciseButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final iconWidget = Icon(icon, size: 20, color: cs.primary);
-    final textWidget = ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 160),
+    final textWidget = Flexible(
       child: Text(
         label,
         overflow: TextOverflow.ellipsis,
         maxLines: 1,
+        textAlign: iconLeading ? TextAlign.left : TextAlign.right,
         style: TextStyle(
           color: cs.onSurface,
           fontWeight: FontWeight.w700,
@@ -91,8 +91,10 @@ class _NavExerciseButton extends StatelessWidget {
           border: Border.all(color: cs.outlineVariant),
           borderRadius: BorderRadius.circular(AppTokens.radiusM),
         ),
+        // Fill the parent Expanded half; prev hugs the left, next the right.
         child: Row(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment:
+              iconLeading ? MainAxisAlignment.start : MainAxisAlignment.end,
           children: iconLeading
               ? [iconWidget, const SizedBox(width: 6), textWidget]
               : [textWidget, const SizedBox(width: 6), iconWidget],

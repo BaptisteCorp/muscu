@@ -224,28 +224,12 @@ class SetRow extends StatelessWidget {
       ),
       // Tightened paddings vs. before: the active row used to push pending
       // rows off-screen on phone-height screens.
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Inline "EN COURS" header beside the badge — no more dedicated row
-          // with vertical spacer.
-          Row(
-            children: [
-              _SetIndexBadge(index: setIndex, active: true),
-              const SizedBox(width: 8),
-              Text(
-                'EN COURS',
-                style: TextStyle(
-                  color: cs.primary,
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1.2,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
+          // No header here — the progress dot strip above the card already
+          // shows which set is in progress.
           Row(
             children: [
               Expanded(
@@ -351,12 +335,10 @@ class SetRow extends StatelessWidget {
 class _SetIndexBadge extends StatelessWidget {
   final int index;
   final bool completed;
-  final bool active;
   final bool skipped;
   const _SetIndexBadge({
     required this.index,
     this.completed = false,
-    this.active = false,
     this.skipped = false,
   });
 
@@ -370,17 +352,6 @@ class _SetIndexBadge extends StatelessWidget {
       bg = AppTokens.successGreen.withOpacity(0.18);
       fg = AppTokens.successGreen;
       child = Icon(Icons.check_rounded, size: 18, color: fg);
-    } else if (active) {
-      bg = cs.primary;
-      fg = cs.onPrimary;
-      child = Text(
-        '${index + 1}',
-        style: TextStyle(
-          color: fg,
-          fontWeight: FontWeight.w900,
-          fontSize: 14,
-        ),
-      );
     } else if (skipped) {
       bg = cs.surfaceContainerHigh;
       fg = cs.onSurfaceVariant;
@@ -406,6 +377,110 @@ class _SetIndexBadge extends StatelessWidget {
         shape: BoxShape.circle,
       ),
       child: child,
+    );
+  }
+}
+
+/// Horizontal strip of small numbered circles — one per set — summarising the
+/// whole sequence at a glance: validated (green check), the set in progress
+/// (filled primary, ringed), skipped (dash) and upcoming (hollow outline).
+/// Replaces the old stack of "à venir" preview rows.
+class SetProgressDots extends StatelessWidget {
+  final List<SetRowState> states;
+
+  /// Per-set tap handler (same length as [states], or null). Validated dots
+  /// open the set editor; skipped dots restore the set. Unused slots are null.
+  final List<VoidCallback?>? taps;
+
+  const SetProgressDots({super.key, required this.states, this.taps});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        for (var i = 0; i < states.length; i++) ...[
+          if (i > 0) const SizedBox(width: 7),
+          _Dot(
+            index: i,
+            state: states[i],
+            onTap: (taps != null && i < taps!.length) ? taps![i] : null,
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _Dot extends StatelessWidget {
+  final int index;
+  final SetRowState state;
+  final VoidCallback? onTap;
+  const _Dot({required this.index, required this.state, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final Color bg;
+    final Widget child;
+    Border? border;
+    var ringed = false;
+    switch (state) {
+      case SetRowState.completed:
+        bg = AppTokens.successGreen;
+        child = const Icon(Icons.check_rounded, size: 15, color: Colors.white);
+        break;
+      case SetRowState.active:
+        bg = cs.primary;
+        ringed = true;
+        child = Text(
+          '${index + 1}',
+          style: TextStyle(
+            color: cs.onPrimary,
+            fontWeight: FontWeight.w900,
+            fontSize: 12,
+          ),
+        );
+        break;
+      case SetRowState.skipped:
+        bg = cs.surfaceContainerHigh;
+        child = Icon(Icons.remove, size: 14, color: cs.onSurfaceVariant);
+        break;
+      case SetRowState.pending:
+        bg = Colors.transparent;
+        border = Border.all(color: cs.outline, width: 1.5);
+        child = Text(
+          '${index + 1}',
+          style: TextStyle(
+            color: cs.onSurfaceVariant,
+            fontWeight: FontWeight.w700,
+            fontSize: 12,
+          ),
+        );
+        break;
+    }
+    final dot = Container(
+      width: 26,
+      height: 26,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(color: bg, shape: BoxShape.circle, border: border),
+      child: child,
+    );
+    // Outer ring to make the in-progress set pop without enlarging the row.
+    final Widget visual = ringed
+        ? Container(
+            padding: const EdgeInsets.all(2),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: cs.primary.withOpacity(0.35), width: 2),
+            ),
+            child: dot,
+          )
+        : dot;
+    if (onTap == null) return visual;
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: visual,
     );
   }
 }
