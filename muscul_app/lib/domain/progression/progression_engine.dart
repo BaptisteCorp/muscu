@@ -48,7 +48,7 @@ class ProgressionEngine {
         targetSets: plannedSets,
         targetReps: repMin,
         targetWeightKg: exercise.startingWeightKg,
-        reason: 'Première fois, on démarre tranquille',
+        reason: 'Première séance',
       );
     }
 

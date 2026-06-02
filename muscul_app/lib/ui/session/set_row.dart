@@ -222,26 +222,30 @@ class SetRow extends StatelessWidget {
           left: BorderSide(color: cs.primary, width: 3),
         ),
       ),
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+      // Tightened paddings vs. before: the active row used to push pending
+      // rows off-screen on phone-height screens.
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Inline "EN COURS" header beside the badge — no more dedicated row
+          // with vertical spacer.
           Row(
             children: [
               _SetIndexBadge(index: setIndex, active: true),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Text(
                 'EN COURS',
                 style: TextStyle(
                   color: cs.primary,
-                  fontSize: 11,
+                  fontSize: 10.5,
                   fontWeight: FontWeight.w800,
                   letterSpacing: 1.2,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           Row(
             children: [
               Expanded(
@@ -287,21 +291,21 @@ class SetRow extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
           Row(
             children: [
               Expanded(
                 child: SizedBox(
-                  height: AppTokens.tapTargetXL,
+                  height: AppTokens.tapTarget,
                   child: FilledButton(
                     onPressed: onValidate,
                     style: FilledButton.styleFrom(
                       backgroundColor: cs.primary,
                       foregroundColor: cs.onPrimary,
                       textStyle: const TextStyle(
-                        fontSize: 18,
+                        fontSize: 16,
                         fontWeight: FontWeight.w900,
-                        letterSpacing: 1.5,
+                        letterSpacing: 1.3,
                       ),
                       shape: RoundedRectangleBorder(
                         borderRadius:
@@ -315,8 +319,8 @@ class SetRow extends StatelessWidget {
               if (onSkip != null) ...[
                 const SizedBox(width: 8),
                 SizedBox(
-                  height: AppTokens.tapTargetXL,
-                  width: AppTokens.tapTargetXL,
+                  height: AppTokens.tapTarget,
+                  width: AppTokens.tapTarget,
                   child: OutlinedButton(
                     onPressed: onSkip,
                     style: OutlinedButton.styleFrom(
@@ -329,7 +333,7 @@ class SetRow extends StatelessWidget {
                     ),
                     child: Icon(
                       Icons.skip_next_outlined,
-                      size: 26,
+                      size: 24,
                       color: cs.onSurfaceVariant,
                     ),
                   ),
@@ -433,7 +437,7 @@ class _BigStepper extends StatelessWidget {
         border: Border.all(color: cs.outline),
         borderRadius: BorderRadius.circular(AppTokens.radiusM),
       ),
-      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -445,7 +449,7 @@ class _BigStepper extends StatelessWidget {
                 label.toUpperCase(),
                 style: TextStyle(
                   color: cs.onSurfaceVariant,
-                  fontSize: 10.5,
+                  fontSize: 10,
                   fontWeight: FontWeight.w800,
                   letterSpacing: 1.0,
                 ),
@@ -456,17 +460,17 @@ class _BigStepper extends StatelessWidget {
                   onTap: onInfo,
                   child: Icon(
                     Icons.info_outline,
-                    size: 13,
+                    size: 12,
                     color: cs.onSurfaceVariant,
                   ),
                 ),
               ],
             ],
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 2),
           // Hero value — fixed height so all 3 columns line up.
           SizedBox(
-            height: 36,
+            height: 30,
             child: FittedBox(
               fit: BoxFit.scaleDown,
               alignment: Alignment.center,
@@ -474,7 +478,7 @@ class _BigStepper extends StatelessWidget {
                 value,
                 maxLines: 1,
                 style: TextStyle(
-                  fontSize: 30,
+                  fontSize: 26,
                   height: 1.0,
                   fontWeight: FontWeight.w900,
                   color: cs.onSurface,
@@ -483,7 +487,7 @@ class _BigStepper extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           Row(
             children: [
               Expanded(
@@ -514,13 +518,13 @@ class _StepperButton extends StatelessWidget {
       onTap: onPressed,
       borderRadius: BorderRadius.circular(AppTokens.radiusS),
       child: Container(
-        height: 40,
+        height: 34,
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: cs.surfaceContainerHigh,
           borderRadius: BorderRadius.circular(AppTokens.radiusS),
         ),
-        child: Icon(icon, size: 22, color: cs.onSurface),
+        child: Icon(icon, size: 20, color: cs.onSurface),
       ),
     );
   }

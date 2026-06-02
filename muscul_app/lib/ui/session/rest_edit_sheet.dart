@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 /// Résultat retourné par [RestEditSheet] : durée choisie + flag "réinitialiser
 /// pour utiliser le repos par défaut de l'exo".
@@ -9,8 +10,9 @@ class RestEditResult {
 }
 
 /// Bottom sheet pour ajuster la durée de repos d'un exo en cours de séance.
-/// Affiche la valeur par défaut, permet +/- 15s ou 30s, presets, et un
-/// bouton "Réinitialiser" si l'utilisateur avait déjà override.
+/// Deux molettes scrollables (style picker Android) — minutes et secondes
+/// par pas de 5s — plutôt que des boutons +/-15s : on règle la durée d'un
+/// seul flick, sans avoir à compter ses taps.
 class RestEditSheet extends StatefulWidget {
   final int initialSeconds;
   final bool isOverridden;
@@ -27,12 +29,35 @@ class RestEditSheet extends StatefulWidget {
 }
 
 class _RestEditSheetState extends State<RestEditSheet> {
-  late int _seconds;
+  static const _secStep = 5;
+  static const _minCount = 16; // 0..15 min
+  static const _secCount = 12; // 0, 5, 10 … 55
+
+  late int _minIdx;
+  late int _secIdx;
+  late FixedExtentScrollController _minCtrl;
+  late FixedExtentScrollController _secCtrl;
+
+  int get _seconds => _minIdx * 60 + _secIdx * _secStep;
 
   @override
   void initState() {
     super.initState();
-    _seconds = widget.initialSeconds;
+    final clamped =
+        widget.initialSeconds.clamp(0, (_minCount - 1) * 60 + 55);
+    _minIdx = clamped ~/ 60;
+    // Snap the seconds part to the nearest 5s so we land on a wheel slot.
+    final rawSec = clamped % 60;
+    _secIdx = (rawSec / _secStep).round().clamp(0, _secCount - 1);
+    _minCtrl = FixedExtentScrollController(initialItem: _minIdx);
+    _secCtrl = FixedExtentScrollController(initialItem: _secIdx);
+  }
+
+  @override
+  void dispose() {
+    _minCtrl.dispose();
+    _secCtrl.dispose();
+    super.dispose();
   }
 
   String _format(int s) {
@@ -42,14 +67,9 @@ class _RestEditSheetState extends State<RestEditSheet> {
     return r == 0 ? '${m}min' : '${m}min ${r}s';
   }
 
-  void _adjust(int delta) {
-    setState(() {
-      _seconds = (_seconds + delta).clamp(0, 60 * 30);
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return SafeArea(
       child: Padding(
         padding: EdgeInsets.fromLTRB(
@@ -66,51 +86,75 @@ class _RestEditSheetState extends State<RestEditSheet> {
             Text(
               'Par défaut : ${_format(widget.defaultSeconds)}',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    color: cs.onSurfaceVariant,
                   ),
             ),
             const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                FilledButton.tonal(
-                  onPressed: () => _adjust(-30),
-                  child: const Text('-30s'),
-                ),
-                FilledButton.tonal(
-                  onPressed: () => _adjust(-15),
-                  child: const Text('-15s'),
-                ),
-                Text(
-                  _format(_seconds),
-                  style: Theme.of(context)
-                      .textTheme
-                      .headlineSmall
-                      ?.copyWith(fontWeight: FontWeight.bold),
-                ),
-                FilledButton.tonal(
-                  onPressed: () => _adjust(15),
-                  child: const Text('+15s'),
-                ),
-                FilledButton.tonal(
-                  onPressed: () => _adjust(30),
-                  child: const Text('+30s'),
-                ),
-              ],
+            // Live total — also the picker title.
+            Center(
+              child: Text(
+                _format(_seconds),
+                style: Theme.of(context)
+                    .textTheme
+                    .headlineMedium
+                    ?.copyWith(
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: -0.5,
+                    ),
+              ),
             ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              alignment: WrapAlignment.center,
-              children: [
-                for (final preset in const [60, 90, 120, 150, 180, 240, 300])
-                  ChoiceChip(
-                    label: Text(_format(preset)),
-                    selected: _seconds == preset,
-                    onSelected: (_) => setState(() => _seconds = preset),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 180,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  // Selection band behind both wheels.
+                  IgnorePointer(
+                    child: Container(
+                      height: 42,
+                      margin: const EdgeInsets.symmetric(horizontal: 24),
+                      decoration: BoxDecoration(
+                        color: cs.primary.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border(
+                          top: BorderSide(color: cs.outlineVariant),
+                          bottom: BorderSide(color: cs.outlineVariant),
+                        ),
+                      ),
+                    ),
                   ),
-              ],
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _Wheel(
+                          controller: _minCtrl,
+                          count: _minCount,
+                          formatItem: (i) => i.toString().padLeft(2, '0'),
+                          unit: 'min',
+                          onChanged: (i) {
+                            HapticFeedback.selectionClick();
+                            setState(() => _minIdx = i);
+                          },
+                        ),
+                      ),
+                      Expanded(
+                        child: _Wheel(
+                          controller: _secCtrl,
+                          count: _secCount,
+                          formatItem: (i) =>
+                              (i * _secStep).toString().padLeft(2, '0'),
+                          unit: 'sec',
+                          onChanged: (i) {
+                            HapticFeedback.selectionClick();
+                            setState(() => _secIdx = i);
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 16),
             Row(
@@ -140,6 +184,73 @@ class _RestEditSheetState extends State<RestEditSheet> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _Wheel extends StatelessWidget {
+  final FixedExtentScrollController controller;
+  final int count;
+  final String Function(int) formatItem;
+  final String unit;
+  final ValueChanged<int> onChanged;
+  const _Wheel({
+    required this.controller,
+    required this.count,
+    required this.formatItem,
+    required this.unit,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        ListWheelScrollView.useDelegate(
+          controller: controller,
+          itemExtent: 42,
+          // Subtle 3D feel without bending the digits too much.
+          perspective: 0.003,
+          diameterRatio: 1.8,
+          physics: const FixedExtentScrollPhysics(),
+          onSelectedItemChanged: onChanged,
+          childDelegate: ListWheelChildBuilderDelegate(
+            builder: (context, i) {
+              if (i < 0 || i >= count) return null;
+              return Center(
+                child: Text(
+                  formatItem(i),
+                  style: TextStyle(
+                    fontSize: 26,
+                    fontWeight: FontWeight.w900,
+                    color: cs.onSurface,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              );
+            },
+            childCount: count,
+          ),
+        ),
+        // Unit label sitting next to the center value. IgnorePointer so it
+        // doesn't eat the wheel's drag gestures.
+        Positioned(
+          right: 8,
+          child: IgnorePointer(
+            child: Text(
+              unit,
+              style: TextStyle(
+                color: cs.onSurfaceVariant,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.0,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -56,36 +56,62 @@ class _MusculAppState extends ConsumerState<MusculApp>
     if (!svc.isAvailable) return;
     _syncInFlight = true;
     try {
-      final report = await svc.sync();
-      // Surface the result so MainScaffold can show errors. Without this
-      // a failing sync silently swallows the error and the user thinks
-      // their data is gone.
-      ref.read(lastSyncReportProvider.notifier).state = report;
-      // After the pull lands, prune phantom in-progress sessions: more than
-      // one session with endedAt IS NULL is always wrong (you can only do
-      // one workout at a time), and abandoning the visible one would
-      // otherwise just surface the next-stalest. Run after sync so we
-      // include any sessions just pulled from the cloud.
+      var report = await svc.sync();
+      // App resumes often fire before the radio is fully back up, so the
+      // first try may hit "Failed host lookup" or AuthRetryableFetchError.
+      // Give the network a beat and retry once before bothering the user.
+      if (!report.ok && _isTransientNetworkError(report.error)) {
+        await Future.delayed(const Duration(seconds: 3));
+        report = await svc.sync();
+      }
+      // Still transient after a retry → stay silent. The next resume / start
+      // will retry naturally; flashing a red snackbar for normal mobile
+      // network blips trains the user to ignore real failures.
+      if (report.ok || !_isTransientNetworkError(report.error)) {
+        ref.read(lastSyncReportProvider.notifier).state = report;
+      }
+      // Prune phantom in-progress sessions even if sync failed — they're a
+      // purely local concern (more than one row with endedAt IS NULL).
       final stale = await ref
           .read(sessionRepositoryProvider)
           .pruneStaleInProgress();
       // Fire-and-forget each pruned deletion: local DB already marks the
-      // session deleted, and the next full sync (this one's _pushAll, plus
-      // every subsequent start/login/resume) will retry on failure. Awaiting
-      // would block this sync's completion behind a potentially flaky
-      // Supabase auth refresh (AuthRetryableFetchError).
+      // session deleted, and the next full sync will retry on failure.
       for (final id in stale) {
         svc.pushSession(id).ignore();
       }
     } catch (e, st) {
+      final errStr = '$e';
+      if (_isTransientNetworkError(errStr)) {
+        // See above — silent for transient network failures.
+        return;
+      }
       ref.read(lastSyncReportProvider.notifier).state = SyncReport(
         ok: false,
-        error: '$e',
+        error: errStr,
         stackTrace: st.toString(),
       );
     } finally {
       _syncInFlight = false;
     }
+  }
+
+  /// True if [err] looks like a "network momentarily unavailable" error —
+  /// the kind that resolves itself on the next attempt. Worth distinguishing
+  /// from real failures (auth expired, RLS, server 500) which the user
+  /// should see immediately.
+  static bool _isTransientNetworkError(String? err) {
+    if (err == null || err.isEmpty) return false;
+    final s = err.toLowerCase();
+    return s.contains('socketexception') ||
+        s.contains('failed host lookup') ||
+        s.contains('no address associated') ||
+        s.contains('handshakeexception') ||
+        s.contains('timeoutexception') ||
+        s.contains('connection closed') ||
+        s.contains('connection reset') ||
+        s.contains('clientexception') ||
+        s.contains('authretryablefetch');
   }
 
   @override
