@@ -1,4 +1,4 @@
-package com.muscul.muscul_app
+package com.reps.app
 
 import io.flutter.embedding.android.FlutterActivity
 

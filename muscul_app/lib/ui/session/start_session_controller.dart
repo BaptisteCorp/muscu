@@ -45,11 +45,12 @@ class StartSessionController {
         }
       }
     }
-    // Push session + its session_exercises synchronously so the freshly-
-    // created session shell can't be lost if the app dies right after start.
-    try {
-      await ref.read(syncServiceProvider).pushSessionWithChildren(id);
-    } catch (_) {/* next sync on resume/login will retry */}
+    // Fire-and-forget the cloud push: the local DB already holds the session
+    // shell, so the next full sync (app start / login / resume) will retry
+    // if this attempt fails. Awaiting would block screen navigation on every
+    // network blip — and with a flaky token the Supabase SDK can stall 5-15s
+    // on AuthRetryableFetchError before giving up.
+    ref.read(syncServiceProvider).pushSessionWithChildren(id).ignore();
     return id;
   }
 }
@@ -77,10 +78,7 @@ Future<String> addExerciseToSession({
           replacedFromSessionExerciseId: replacedFromSessionExerciseId,
         ),
       );
-  // Push this single row so a fresh quick-swap / freestyle add survives an
-  // app death immediately after.
-  try {
-    await ref.read(syncServiceProvider).pushSessionExercise(id);
-  } catch (_) {/* sync on resume/login will retry */}
+  // Fire-and-forget — see comment in startSession() above.
+  ref.read(syncServiceProvider).pushSessionExercise(id).ignore();
   return id;
 }

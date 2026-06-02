@@ -1,6 +1,8 @@
-# Muscul App
+# Reps
 
 Application Android de suivi de séances de musculation, **local-first** — implémente le design `2026-04-30-muscul-app-design.md` (v1).
+
+> Le code source utilise encore le nom de package interne `muscul_app` (Dart, Android applicationId, fichier DB). Seul le nom affiché à l'utilisateur est **Reps**.
 
 ## Pré-requis
 

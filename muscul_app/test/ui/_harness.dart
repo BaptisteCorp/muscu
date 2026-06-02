@@ -9,10 +9,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
-import 'package:muscul_app/core/providers.dart';
-import 'package:muscul_app/data/db/database.dart';
-import 'package:muscul_app/ui/library/exercises/exercise_edit_screen.dart';
-import 'package:muscul_app/ui/library/templates/template_edit_screen.dart';
+import 'package:reps/core/providers.dart';
+import 'package:reps/data/db/database.dart';
+import 'package:reps/ui/library/exercises/exercise_edit_screen.dart';
+import 'package:reps/ui/library/templates/template_edit_screen.dart';
 
 class TestHarness {
   TestHarness._(this.db, this.router, this.widget);

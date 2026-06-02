@@ -242,12 +242,11 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
       syncStatus: SyncStatus.pending,
     );
     await ref.read(exerciseRepositoryProvider).upsert(exercise);
-    // Push synchronously so a freshly-created/edited custom exercise can't
-    // be lost between local save and the next batched sync. Best-effort:
-    // if offline, the periodic sync will retry.
-    try {
-      await ref.read(syncServiceProvider).pushExercise(id);
-    } catch (_) {/* periodic sync will retry */}
+    // Fire-and-forget: local DB is the source of truth, and awaiting the
+    // network round-trip would freeze the Save button for 5-15s when the
+    // Supabase auth token is in the middle of an AuthRetryableFetchError
+    // backoff. Next full sync retries on failure.
+    ref.read(syncServiceProvider).pushExercise(id).ignore();
   }
 
   /// Called when the user navigates back. Auto-save if valid; otherwise ask
@@ -317,9 +316,7 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
     if (ok == true) {
       final id = _initial!.id;
       await ref.read(exerciseRepositoryProvider).softDelete(id);
-      try {
-        await ref.read(syncServiceProvider).pushExercise(id);
-      } catch (_) {/* periodic sync will retry */}
+      ref.read(syncServiceProvider).pushExercise(id).ignore();
       if (mounted) context.pop();
     }
   }

@@ -368,9 +368,7 @@ class _HistoryTile extends ConsumerWidget {
 
   Future<void> _doDelete(WidgetRef ref) async {
     await ref.read(sessionRepositoryProvider).softDeleteSession(session.id);
-    try {
-      await ref.read(syncServiceProvider).pushSession(session.id);
-    } catch (_) {/* later sync will retry */}
+    ref.read(syncServiceProvider).pushSession(session.id).ignore();
   }
 
   @override
@@ -644,9 +642,7 @@ Future<void> _addPastSession(BuildContext context, WidgetRef ref) async {
       }
     }
   }
-  try {
-    await ref.read(syncServiceProvider).pushSessionWithChildren(id);
-  } catch (_) {/* later sync will retry */}
+  ref.read(syncServiceProvider).pushSessionWithChildren(id).ignore();
   if (context.mounted) {
     context.push('/session/$id');
   }

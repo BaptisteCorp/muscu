@@ -69,11 +69,13 @@ class _MusculAppState extends ConsumerState<MusculApp>
       final stale = await ref
           .read(sessionRepositoryProvider)
           .pruneStaleInProgress();
-      // Push each pruned deletion synchronously so it can't be lost.
+      // Fire-and-forget each pruned deletion: local DB already marks the
+      // session deleted, and the next full sync (this one's _pushAll, plus
+      // every subsequent start/login/resume) will retry on failure. Awaiting
+      // would block this sync's completion behind a potentially flaky
+      // Supabase auth refresh (AuthRetryableFetchError).
       for (final id in stale) {
-        try {
-          await svc.pushSession(id);
-        } catch (_) {/* periodic sync will retry */}
+        svc.pushSession(id).ignore();
       }
     } catch (e, st) {
       ref.read(lastSyncReportProvider.notifier).state = SyncReport(
@@ -116,7 +118,7 @@ class _MusculAppState extends ConsumerState<MusculApp>
     }
 
     return MaterialApp.router(
-      title: 'Muscul',
+      title: 'Reps',
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: mode,

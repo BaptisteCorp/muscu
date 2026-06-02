@@ -157,9 +157,7 @@ class _ExerciseTile extends ConsumerWidget {
       confirmDismiss: (_) => _confirmDelete(context),
       onDismissed: (_) async {
         await ref.read(exerciseRepositoryProvider).softDelete(exercise.id);
-        try {
-          await ref.read(syncServiceProvider).pushExercise(exercise.id);
-        } catch (_) {/* periodic sync will retry */}
+        ref.read(syncServiceProvider).pushExercise(exercise.id).ignore();
       },
       child: tile,
     );

@@ -8,9 +8,9 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:muscul_app/data/db/database.dart';
-import 'package:muscul_app/data/repositories/template_repository.dart';
-import 'package:muscul_app/domain/models/workout_template.dart';
+import 'package:reps/data/db/database.dart';
+import 'package:reps/data/repositories/template_repository.dart';
+import 'package:reps/domain/models/workout_template.dart';
 
 import '_harness.dart';
 

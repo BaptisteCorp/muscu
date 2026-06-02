@@ -447,9 +447,7 @@ class _SettingsSheet extends ConsumerWidget {
                 await ref
                     .read(settingsRepositoryProvider)
                     .save(s.copyWith(useRirInsteadOfRpe: v));
-                try {
-                  await ref.read(syncServiceProvider).pushSettings();
-                } catch (_) {/* later sync will retry */}
+                ref.read(syncServiceProvider).pushSettings().ignore();
               },
             ),
             ListTile(
@@ -484,11 +482,10 @@ class _SettingsSheet extends ConsumerWidget {
                               updatedAt: today,
                             ),
                           );
-                      try {
-                        await ref
-                            .read(syncServiceProvider)
-                            .pushBodyweight(dateStr);
-                      } catch (_) {/* later sync will retry */}
+                      ref
+                          .read(syncServiceProvider)
+                          .pushBodyweight(dateStr)
+                          .ignore();
                     } else {
                       // User cleared the field → drop the cached weight
                       // (does not touch logged history).
@@ -498,9 +495,7 @@ class _SettingsSheet extends ConsumerWidget {
                               clearUserBodyweightKg: true,
                             ),
                           );
-                      try {
-                        await ref.read(syncServiceProvider).pushSettings();
-                      } catch (_) {/* later sync will retry */}
+                      ref.read(syncServiceProvider).pushSettings().ignore();
                     }
                   },
                 ),

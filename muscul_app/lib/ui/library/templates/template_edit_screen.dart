@@ -109,12 +109,10 @@ class _TemplateEditScreenState extends ConsumerState<TemplateEditScreen> {
     ];
     await repo.setTemplateExercises(id, reordered);
     _dirty = false;
-    // Push synchronously so this template can't be lost between local
-    // save and the next batched sync (3-min timer). Best-effort: if the
-    // network is down, the periodic sync will retry.
-    try {
-      await ref.read(syncServiceProvider).pushTemplate(id);
-    } catch (_) {/* periodic sync will retry */}
+    // Fire-and-forget: local DB is the source of truth and awaiting blocks
+    // the screen on a flaky Supabase auth token for 5-15s. Next full sync
+    // retries on failure.
+    ref.read(syncServiceProvider).pushTemplate(id).ignore();
     return true;
   }
 
@@ -186,9 +184,7 @@ class _TemplateEditScreenState extends ConsumerState<TemplateEditScreen> {
     if (ok == true) {
       final id = _initial!.id;
       await ref.read(templateRepositoryProvider).softDelete(id);
-      try {
-        await ref.read(syncServiceProvider).pushTemplate(id);
-      } catch (_) {/* periodic sync will retry */}
+      ref.read(syncServiceProvider).pushTemplate(id).ignore();
       if (mounted) context.pop();
     }
   }

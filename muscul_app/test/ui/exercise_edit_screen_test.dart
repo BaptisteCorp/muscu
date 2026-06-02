@@ -6,10 +6,10 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:muscul_app/data/db/database.dart';
-import 'package:muscul_app/data/repositories/exercise_repository.dart';
-import 'package:muscul_app/domain/models/enums.dart';
-import 'package:muscul_app/domain/models/exercise.dart';
+import 'package:reps/data/db/database.dart';
+import 'package:reps/data/repositories/exercise_repository.dart';
+import 'package:reps/domain/models/enums.dart';
+import 'package:reps/domain/models/exercise.dart';
 
 import '_harness.dart';
 import 'template_edit_screen_test.dart' show pushAndSettle, systemBack;

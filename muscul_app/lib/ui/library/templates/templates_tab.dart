@@ -84,9 +84,7 @@ class _TemplateTile extends ConsumerWidget {
       confirmDismiss: (_) => _confirmDelete(context),
       onDismissed: (_) async {
         await ref.read(templateRepositoryProvider).softDelete(template.id);
-        try {
-          await ref.read(syncServiceProvider).pushTemplate(template.id);
-        } catch (_) {/* periodic sync will retry */}
+        ref.read(syncServiceProvider).pushTemplate(template.id).ignore();
       },
       child: Material(
         color: cs.surfaceContainer,

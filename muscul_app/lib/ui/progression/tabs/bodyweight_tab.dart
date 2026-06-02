@@ -348,11 +348,10 @@ class _BodyweightTile extends ConsumerWidget {
       },
       onDismissed: (_) async {
         await ref.read(bodyweightRepositoryProvider).delete(entry.date);
-        try {
-          await ref
-              .read(syncServiceProvider)
-              .pushBodyweight(entry.date, delete: true);
-        } catch (_) {/* later sync will retry */}
+        ref
+            .read(syncServiceProvider)
+            .pushBodyweight(entry.date, delete: true)
+            .ignore();
       },
       child: Card(
         child: ListTile(
@@ -468,11 +467,10 @@ Future<void> _logBodyweight(
                           : noteCtrl.text.trim(),
                       updatedAt: DateTime.now(),
                     ));
-                    try {
-                      await ref
-                          .read(syncServiceProvider)
-                          .pushBodyweight(dateStr);
-                    } catch (_) {/* later sync will retry */}
+                    ref
+                        .read(syncServiceProvider)
+                        .pushBodyweight(dateStr)
+                        .ignore();
                     if (sheetCtx.mounted) {
                       Navigator.pop(sheetCtx, true);
                     }

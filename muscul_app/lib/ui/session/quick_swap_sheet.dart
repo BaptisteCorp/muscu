@@ -282,9 +282,7 @@ class _QuickCreateFormState extends ConsumerState<_QuickCreateForm> {
                   updatedAt: DateTime.now(),
                 );
                 await ref.read(exerciseRepositoryProvider).upsert(ex);
-                try {
-                  await ref.read(syncServiceProvider).pushExercise(ex.id);
-                } catch (_) {/* later sync will retry */}
+                ref.read(syncServiceProvider).pushExercise(ex.id).ignore();
                 if (mounted) Navigator.pop(context, ex);
               },
               child: const Text('Créer & substituer'),

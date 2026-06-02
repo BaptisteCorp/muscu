@@ -1,9 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:muscul_app/domain/models/enums.dart';
-import 'package:muscul_app/domain/models/exercise.dart';
-import 'package:muscul_app/domain/models/session.dart';
-import 'package:muscul_app/domain/models/user_settings.dart';
-import 'package:muscul_app/domain/progression/progression_engine.dart';
+import 'package:reps/domain/models/enums.dart';
+import 'package:reps/domain/models/exercise.dart';
+import 'package:reps/domain/models/session.dart';
+import 'package:reps/domain/models/user_settings.dart';
+import 'package:reps/domain/progression/progression_engine.dart';
 
 const _settings = UserSettings();
 

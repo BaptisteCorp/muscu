@@ -436,29 +436,19 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
     final increment = exercise.effectiveIncrementKg(settings.defaultIncrementKg);
     final plan = _planByExercise[item.sessionExercise.exerciseId] ?? const [];
 
-    // The template plan stores the weights at the moment the user designed
-    // it — once progressive overload kicks in, those numbers are stale.
-    // Rebase the plan onto the engine's target so the PLAN card shows what
-    // the user will actually do today (e.g. 4×8 @ 49kg, not @ 44kg).
-    final displayPlan = plan.isEmpty
-        ? const <TemplateExerciseSet>[]
-        : [
-            for (final s in plan)
-              s.copyWith(
-                plannedReps: target.targetReps,
-                plannedWeightKg: target.targetWeightKg,
-              ),
-          ];
-
     /// Valeurs par défaut de chaque série :
     ///   1. si une série précédente a déjà été validée dans cette séance,
     ///      on reprend ses reps/poids — l'utilisateur n'a qu'à saisir une
-    ///      fois s'il dévie du target (ex. plan à 40kg mais il fait 60kg,
+    ///      fois s'il dévie du plan (ex. plan à 40kg mais il fait 60kg,
     ///      les séries 2/3/4 doivent défaulter à 60kg, pas rester à 40kg) ;
-    ///   2. sinon on retombe sur le moteur de surcharge progressive (target).
-    /// Le plan du template ne sert que pour la STRUCTURE (nombre de séries) ;
-    /// ses reps/poids planifiés ne sont pas re-imposés à chaque séance,
-    /// sinon la progression serait gelée.
+    ///   2. sinon, si le template définit explicitement la série, on prend
+    ///      ses reps/poids — c'est la source de vérité quand l'utilisateur
+    ///      a édité le plan (deload manuel, charge modifiée…) ; le ratchet
+    ///      de `applyValidatedSet` re-bumpe automatiquement le plan vers le
+    ///      haut après chaque série validée plus lourde, donc on n'écrase
+    ///      jamais une vraie progression ;
+    ///   3. sinon on retombe sur le moteur de surcharge progressive (target),
+    ///      utile en freestyle et pour les séries hors-plan.
     PendingSet defaultFor(int pos) {
       final lastValidated = item.sets.where((s) => !s.isWarmup).toList();
       if (lastValidated.isNotEmpty) {
@@ -466,6 +456,14 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
         return PendingSet(
           reps: last.reps,
           weight: last.weightKg,
+          rpe: null,
+        );
+      }
+      if (plan.isNotEmpty) {
+        final planSet = pos < plan.length ? plan[pos] : plan.last;
+        return PendingSet(
+          reps: planSet.plannedReps,
+          weight: planSet.plannedWeightKg ?? target.targetWeightKg,
           rpe: null,
         );
       }
@@ -639,7 +637,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
         const SizedBox(height: 14),
         // Plan / Target presented as a tonal card with chips.
         PlanCard(
-          plan: displayPlan,
+          plan: plan,
           target: target,
           formatWeight: fmtKg,
           formatPlanLine: _planLine,
@@ -781,12 +779,11 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
     setState(() {
       _pending[item.sessionExercise.id]?.remove(setPos);
     });
-    // Push the validated set immediately so a freshly-logged set survives
-    // an app death right after.
+    // Fire-and-forget the cloud push so validating a set doesn't block the
+    // UI on a slow network. Local DB has the row already; the next full
+    // sync (app start / login / resume) retries on failure.
     final svc = ref.read(syncServiceProvider);
-    try {
-      await svc.pushSet(entry.id);
-    } catch (_) {/* later sync will retry */}
+    svc.pushSet(entry.id).ignore();
     // Ratchet: if this session was started from a template, sync the
     // validated set's reps/weight back into the template so the user
     // sees the latest progression next time they look at it or start
@@ -800,9 +797,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
             reps: entry.reps,
             weightKg: entry.weightKg,
           );
-      try {
-        await svc.pushTemplate(templateId);
-      } catch (_) {/* later sync will retry */}
+      svc.pushTemplate(templateId).ignore();
     }
   }
 
@@ -814,9 +809,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
     );
     if (updated != null) {
       await ref.read(sessionRepositoryProvider).upsertSet(updated);
-      try {
-        await ref.read(syncServiceProvider).pushSet(updated.id);
-      } catch (_) {/* later sync will retry */}
+      ref.read(syncServiceProvider).pushSet(updated.id).ignore();
     }
   }
 
@@ -833,11 +826,10 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
     if (item.sets.isEmpty) {
       final removedId = item.sessionExercise.id;
       await repo.deleteSessionExercise(removedId);
-      try {
-        await ref
-            .read(syncServiceProvider)
-            .deleteSessionExerciseOnCloud(removedId);
-      } catch (_) {/* later sync will retry */}
+      ref
+          .read(syncServiceProvider)
+          .deleteSessionExerciseOnCloud(removedId)
+          .ignore();
       await addExerciseToSession(
         ref: ref,
         sessionId: widget.sessionId,
@@ -891,26 +883,21 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
     if (prev.supersetGroupId == null) {
       await repo.upsertSessionExercise(
           prev.copyWith(supersetGroupId: groupId));
-      try {
-        await svc.pushSessionExercise(prev.id);
-      } catch (_) {/* later sync will retry */}
+      svc.pushSessionExercise(prev.id).ignore();
     }
     await repo.upsertSessionExercise(
         current.copyWith(supersetGroupId: groupId));
-    try {
-      await svc.pushSessionExercise(current.id);
-    } catch (_) {/* later sync will retry */}
+    svc.pushSessionExercise(current.id).ignore();
   }
 
   Future<void> _leaveSuperset(SessionExerciseWithSets item) async {
     final repo = ref.read(sessionRepositoryProvider);
     await repo.upsertSessionExercise(item.sessionExercise
         .copyWith(clearSupersetGroupId: true));
-    try {
-      await ref
-          .read(syncServiceProvider)
-          .pushSessionExercise(item.sessionExercise.id);
-    } catch (_) {/* later sync will retry */}
+    ref
+        .read(syncServiceProvider)
+        .pushSessionExercise(item.sessionExercise.id)
+        .ignore();
   }
 
   Future<void> _editSessionNote() async {
@@ -970,9 +957,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
       updatedAt: DateTime.now(),
     );
     await repo.upsertSession(updated);
-    try {
-      await ref.read(syncServiceProvider).pushSession(updated.id);
-    } catch (_) {/* later sync will retry */}
+    ref.read(syncServiceProvider).pushSession(updated.id).ignore();
   }
 
   Future<void> _finish() async {
@@ -1001,15 +986,14 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
       updatedAt: DateTime.now(),
     );
     await repo.upsertSession(updated);
-    // Push session + its exercises + sets synchronously so the
-    // just-finished workout is safe on the cloud before the user can
-    // reinstall, kill the app, or lose the device. The periodic sync
-    // would also push, but it's not guaranteed to run in time.
-    try {
-      await ref
-          .read(syncServiceProvider)
-          .pushSessionWithChildren(widget.sessionId);
-    } catch (_) {/* later sync will retry */}
+    // Fire-and-forget the cloud push so finishing the session doesn't make
+    // the user stare at a frozen button for 5-15s on a slow network. The
+    // workout is already in local DB; the next full sync (app start /
+    // login / resume) retries on failure.
+    ref
+        .read(syncServiceProvider)
+        .pushSessionWithChildren(widget.sessionId)
+        .ignore();
     if (mounted) {
       context.go('/home');
     }
@@ -1091,9 +1075,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
   Future<void> _abandonSession() async {
     final repo = ref.read(sessionRepositoryProvider);
     await repo.softDeleteSession(widget.sessionId);
-    try {
-      await ref.read(syncServiceProvider).pushSession(widget.sessionId);
-    } catch (_) {/* later sync will retry */}
+    ref.read(syncServiceProvider).pushSession(widget.sessionId).ignore();
     if (mounted) {
       context.go('/home');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1153,9 +1135,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
       clearRestSeconds: result.reset,
     );
     await ref.read(sessionRepositoryProvider).upsertSessionExercise(updated);
-    try {
-      await ref.read(syncServiceProvider).pushSessionExercise(updated.id);
-    } catch (_) {/* later sync will retry */}
+    ref.read(syncServiceProvider).pushSessionExercise(updated.id).ignore();
   }
 }
 
