@@ -15,14 +15,29 @@ class RestTimer extends StatefulWidget {
 }
 
 class RestTimerController extends ChangeNotifier {
-  int _remaining = 0;
   int _total = 0;
   int _lastTotal = 0;
   Timer? _timer;
   DateTime? _startedAt;
+  // The wall-clock instant the rest is scheduled to end. The countdown is
+  // derived from this (not a decremented counter), so it stays correct even
+  // if the OS suspends our periodic tick while the app is backgrounded or the
+  // screen is locked — on resume the remaining time is recomputed from `now`.
+  DateTime? _endsAt;
   DateTime? _finishedAt;
+  bool _finishedHandled = false;
 
-  int get remaining => _remaining;
+  /// Seconds left before the rest ends, derived from [_endsAt] and the current
+  /// wall clock (rounded up so a fresh start shows the full duration).
+  int get remaining {
+    final e = _endsAt;
+    if (e == null) return 0;
+    final ms = e.difference(DateTime.now()).inMilliseconds;
+    if (ms <= 0) return 0;
+    final secs = (ms / 1000).ceil();
+    return secs > _total ? _total : secs;
+  }
+
   int get total => _total;
   int get lastTotal => _lastTotal;
   bool get isRunning => _timer != null;
@@ -41,20 +56,40 @@ class RestTimerController extends ChangeNotifier {
     _stopTimerOnly();
     _total = seconds;
     _lastTotal = seconds;
-    _remaining = seconds;
-    _startedAt = DateTime.now();
+    final now = DateTime.now();
+    _startedAt = now;
+    _endsAt = now.add(Duration(seconds: seconds));
     _finishedAt = null;
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      _remaining = (_remaining - 1).clamp(0, _total);
-      if (_remaining == 0) {
-        _stopTimerOnly();
+    _finishedHandled = false;
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+    notifyListeners();
+    return prev;
+  }
+
+  void _tick() {
+    if (remaining <= 0) {
+      if (!_finishedHandled) {
+        _finishedHandled = true;
         _finishedAt = DateTime.now();
         _onRestFinished();
       }
-      notifyListeners();
-    });
+      _stopTimerOnly();
+    }
     notifyListeners();
-    return prev;
+  }
+
+  /// Recompute the display after the app returns to the foreground. The
+  /// periodic tick may have been suspended in the background, so this catches
+  /// up immediately (and fires the finish feedback if the rest elapsed while
+  /// we were away).
+  void refresh() {
+    if (_endsAt != null && remaining <= 0 && !_finishedHandled) {
+      _finishedHandled = true;
+      _finishedAt = DateTime.now();
+      _onRestFinished();
+      _stopTimerOnly();
+    }
+    notifyListeners();
   }
 
   /// Restart the timer with the previously used duration (or fallback).
@@ -67,8 +102,9 @@ class RestTimerController extends ChangeNotifier {
   /// Skip the current countdown (jump to GO!).
   void skip() {
     _stopTimerOnly();
-    _remaining = 0;
+    _endsAt = DateTime.now();
     _finishedAt = DateTime.now();
+    _finishedHandled = true;
     notifyListeners();
   }
 
@@ -76,8 +112,9 @@ class RestTimerController extends ChangeNotifier {
   void stop() {
     _stopTimerOnly();
     _total = 0;
-    _remaining = 0;
+    _endsAt = null;
     _finishedAt = null;
+    _finishedHandled = false;
     notifyListeners();
   }
 

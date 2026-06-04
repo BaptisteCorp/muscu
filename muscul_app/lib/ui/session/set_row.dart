@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../domain/models/session.dart';
+import 'int_wheel_sheet.dart';
 import 'weight_edit_sheet.dart';
 
 enum SetRowState { completed, active, pending, skipped }
@@ -18,7 +19,6 @@ class SetRow extends StatelessWidget {
   final int reps;
   final double weightKg;
   final int? rpe;
-  final double incrementKg;
   final SetRowState state;
   final bool useRir;
   final ValueChanged<int> onRepsChanged;
@@ -37,7 +37,6 @@ class SetRow extends StatelessWidget {
     required this.reps,
     required this.weightKg,
     required this.rpe,
-    required this.incrementKg,
     required this.state,
     required this.useRir,
     required this.onRepsChanged,
@@ -237,8 +236,7 @@ class SetRow extends StatelessWidget {
                 child: _BigStepper(
                   label: 'reps',
                   value: reps.toString(),
-                  onMinus: () => onRepsChanged((reps - 1).clamp(1, 999)),
-                  onPlus: () => onRepsChanged(reps + 1),
+                  onTap: () => _editRepsManually(context),
                 ),
               ),
               const SizedBox(width: 8),
@@ -246,15 +244,7 @@ class SetRow extends StatelessWidget {
                 child: _BigStepper(
                   label: bodyweightLabel != null ? '+kg' : 'kg',
                   value: fmtKg(weightKg),
-                  onMinus: () => onWeightChanged(
-                    bodyweightLabel != null
-                        ? (weightKg - incrementKg)
-                        : (weightKg - incrementKg)
-                            .clamp(0, 9999)
-                            .toDouble(),
-                  ),
-                  onPlus: () => onWeightChanged(weightKg + incrementKg),
-                  onValueTap: () => _editWeightManually(context),
+                  onTap: () => _editWeightManually(context),
                 ),
               ),
               const SizedBox(width: 8),
@@ -264,14 +254,7 @@ class SetRow extends StatelessWidget {
                   value: rpe == null
                       ? '—'
                       : (useRir ? (10 - rpe!).toString() : rpe!.toString()),
-                  onMinus: () {
-                    final cur = rpe ?? 8;
-                    onRpeChanged((cur - 1).clamp(1, 10));
-                  },
-                  onPlus: () {
-                    final cur = rpe ?? 8;
-                    onRpeChanged((cur + 1).clamp(1, 10));
-                  },
+                  onTap: () => _editRpeManually(context),
                   onInfo: () => _showRpeInfo(context, useRir),
                 ),
               ),
@@ -330,6 +313,44 @@ class SetRow extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// Wheel picker pour les reps (1..60).
+  Future<void> _editRepsManually(BuildContext context) async {
+    final picked = await showIntWheel(
+      context,
+      title: 'Répétitions',
+      min: 1,
+      max: 60,
+      initial: reps,
+      unit: 'reps',
+    );
+    if (picked != null) onRepsChanged(picked);
+  }
+
+  /// Wheel picker pour le RPE (1..10) ou le RIR (0..9). On présente l'échelle
+  /// affichée à l'utilisateur et on reconvertit en RPE pour le stockage.
+  Future<void> _editRpeManually(BuildContext context) async {
+    final currentRpe = (rpe ?? 8).clamp(1, 10);
+    if (useRir) {
+      final picked = await showIntWheel(
+        context,
+        title: 'RIR — reps en réserve',
+        min: 0,
+        max: 9,
+        initial: 10 - currentRpe,
+      );
+      if (picked != null) onRpeChanged((10 - picked).clamp(1, 10));
+    } else {
+      final picked = await showIntWheel(
+        context,
+        title: 'RPE — intensité perçue',
+        min: 1,
+        max: 10,
+        initial: currentRpe,
+      );
+      if (picked != null) onRpeChanged(picked.clamp(1, 10));
+    }
   }
 
   /// Opens the kilo-by-kilo wheel picker for manual weight entry, then pushes
@@ -501,27 +522,22 @@ class _Dot extends StatelessWidget {
   }
 }
 
-/// Vertical stepper: label on top, big tabular value in the middle, +/-
-/// buttons at the bottom side-by-side. Vertical because three steppers
-/// share the row width — a horizontal layout (button / value / button)
-/// squeezes the number to nothing on phone-width screens.
+/// Vertical "stepper" : label en haut, grosse valeur tabulaire au centre,
+/// et un bouton molette en bas. Plus de +/- : tout se règle à la molette
+/// (tap valeur ou bouton), c'est plus simple et plus lisible. Vertical car
+/// trois colonnes se partagent la largeur de la ligne.
 class _BigStepper extends StatelessWidget {
   final String label;
   final String value;
-  final VoidCallback onMinus;
-  final VoidCallback onPlus;
   final VoidCallback? onInfo;
 
-  /// Tapping the hero value (e.g. to open a manual picker). Adds a subtle
-  /// edit affordance when provided.
-  final VoidCallback? onValueTap;
+  /// Ouvre le picker (tap sur la valeur ou sur le bouton molette).
+  final VoidCallback onTap;
   const _BigStepper({
     required this.label,
     required this.value,
-    required this.onMinus,
-    required this.onPlus,
+    required this.onTap,
     this.onInfo,
-    this.onValueTap,
   });
 
   @override
@@ -564,12 +580,11 @@ class _BigStepper extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 2),
-          // Hero value — fixed height so all 3 columns line up. Tappable when
-          // a manual picker is wired (underlined to hint it).
+          // Hero value — fixed height so all 3 columns line up.
           SizedBox(
             height: 30,
             child: GestureDetector(
-              onTap: onValueTap,
+              onTap: onTap,
               behavior: HitTestBehavior.opaque,
               child: FittedBox(
                 fit: BoxFit.scaleDown,
@@ -592,13 +607,7 @@ class _BigStepper extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: _StepperButton(
-                    icon: Icons.remove_rounded, onPressed: onMinus),
-              ),
-              const SizedBox(width: 4),
-              Expanded(
-                child: _StepperButton(
-                    icon: Icons.add_rounded, onPressed: onPlus),
+                child: _StepperButton(icon: Icons.tune_rounded, onPressed: onTap),
               ),
             ],
           ),

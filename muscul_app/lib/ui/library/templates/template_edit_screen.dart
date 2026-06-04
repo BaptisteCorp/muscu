@@ -10,6 +10,7 @@ import '../../../data/sync/sync_service.dart';
 import '../../../domain/models/enums.dart';
 import '../../../domain/models/exercise.dart';
 import '../../../domain/models/workout_template.dart';
+import '../exercises/quick_create_exercise_form.dart';
 
 const _uuid = Uuid();
 
@@ -578,6 +579,25 @@ class _ExercisePickerSheetState extends ConsumerState<_ExercisePickerSheet> {
                 loading: () =>
                     const Center(child: CircularProgressIndicator()),
                 error: (e, _) => Center(child: Text('Erreur: $e')),
+              ),
+            ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.add),
+                label: const Text("Créer un nouvel exercice"),
+                onPressed: () async {
+                  final ex = await showModalBottomSheet<Exercise>(
+                    context: context,
+                    isScrollControlled: true,
+                    builder: (_) => const QuickCreateExerciseForm(
+                        ctaLabel: 'Créer & ajouter'),
+                  );
+                  if (ex != null && context.mounted) {
+                    Navigator.pop(context, ex);
+                  }
+                },
               ),
             ),
           ],

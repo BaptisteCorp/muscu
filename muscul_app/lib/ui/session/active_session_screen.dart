@@ -45,7 +45,8 @@ class ActiveSessionScreen extends ConsumerStatefulWidget {
       _ActiveSessionScreenState();
 }
 
-class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
+class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
+    with WidgetsBindingObserver {
   final _restCtrl = RestTimerController();
   final _pageCtrl = PageController();
   // User adjustments per session-exercise per set position. Keyed
@@ -54,6 +55,9 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
   final Map<String, Map<int, PendingSet>> _pending = {};
   // skipped absolute set positions per session-exercise (UI-only).
   final Map<String, Set<int>> _skipped = {};
+  // Extra set slots the user added on the fly via the "+" next to the dots,
+  // per session-exercise (UI-only — a slot becomes a real set once validated).
+  final Map<String, int> _extraSlots = {};
   // Plan from the template, indexed by exerciseId → list of planned sets
   // (sorted by setIndex). Empty list = no template plan (freestyle session).
   Map<String, List<TemplateExerciseSet>> _planByExercise = const {};
@@ -64,11 +68,23 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _sessionTicker =
         Timer.periodic(const Duration(seconds: 1), (_) => _refreshElapsed());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadPlan();
     });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Timers are derived from wall-clock timestamps, but the OS suspends our
+    // periodic ticks while backgrounded — recompute both as soon as we're
+    // back so the elapsed time and rest countdown are immediately accurate.
+    if (state == AppLifecycleState.resumed) {
+      _refreshElapsed();
+      _restCtrl.refresh();
+    }
   }
 
   /// Reads the template's planned sets (if this session is from a template)
@@ -100,6 +116,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _sessionTicker?.cancel();
     _restCtrl.dispose();
     _pageCtrl.dispose();
@@ -440,7 +457,6 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
     required bool hasHistory,
     required UserSettings settings,
   }) {
-    final increment = exercise.effectiveIncrementKg(settings.defaultIncrementKg);
     final plan = _planByExercise[item.sessionExercise.exerciseId] ?? const [];
 
     // Valeurs par défaut d'une série — logique pure et testée dans
@@ -463,13 +479,14 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
 
     final skipped = _skipped[item.sessionExercise.id] ?? <int>{};
     final savedCount = item.sets.length;
+    final extraSlots = _extraSlots[item.sessionExercise.id] ?? 0;
     // Plan length is the canonical "target sets" when a plan exists.
     final plannedCount = plan.isNotEmpty ? plan.length : target.targetSets;
     final totalSlots = [
       plannedCount,
       savedCount + skipped.length,
       3,
-    ].reduce((a, b) => a > b ? a : b);
+    ].reduce((a, b) => a > b ? a : b) + extraSlots;
 
     // Classify every slot. The whole set sequence is now shown as a single
     // strip of dots — validated sets are a green check (tap to edit), skipped
@@ -514,7 +531,6 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
         reps: p.reps,
         weightKg: p.weight,
         rpe: p.rpe,
-        incrementKg: increment,
         state: SetRowState.active,
         useRir: settings.useRirInsteadOfRpe,
         bodyweightLabel: exercise.useBodyweight
@@ -569,6 +585,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
         PlanCard(
           plan: plan,
           target: target,
+          hasHistory: hasHistory,
           formatWeight: fmtKg,
           formatPlanLine: _planLine,
         ),
@@ -605,12 +622,27 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
           clipBehavior: Clip.antiAlias,
           child: Column(
             children: [
-              // Progress strip — a dot per set, the whole sequence at a glance.
+              // Progress strip — a dot per set, the whole sequence at a glance,
+              // followed by a "+" to tack on an extra set on the fly.
               Padding(
                 padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: progressDots,
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      progressDots,
+                      const SizedBox(width: 7),
+                      _AddSetButton(
+                        onTap: () => setState(() {
+                          _extraSlots.update(
+                            item.sessionExercise.id,
+                            (v) => v + 1,
+                            ifAbsent: () => 1,
+                          );
+                        }),
+                      ),
+                    ],
+                  ),
                 ),
               ),
               if (activeRow != null) ...[
@@ -919,9 +951,208 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
         .read(syncServiceProvider)
         .pushSessionWithChildren(widget.sessionId)
         .ignore();
+    // A freestyle session (no template) is often worth keeping. Offer to turn
+    // what was just done into a reusable template, with a summary of the
+    // sets/weights, before leaving the screen.
+    if (detail.session.templateId == null && hasAnyWorkingSet && mounted) {
+      await _offerSaveAsTemplate(detail);
+    }
     if (mounted) {
       context.go('/home');
     }
+  }
+
+  /// Builds a template draft from the just-finished freestyle session and, if
+  /// the user confirms (and names it), persists it and pushes it to the cloud.
+  Future<void> _offerSaveAsTemplate(SessionDetail detail) async {
+    final exRepo = ref.read(exerciseRepositoryProvider);
+    final drafts = <_FreestyleDraftExercise>[];
+    for (final e in detail.exercises) {
+      final working = e.sets.where((s) => !s.isWarmup).toList()
+        ..sort((a, b) => a.setIndex.compareTo(b.setIndex));
+      if (working.isEmpty) continue;
+      final ex = await exRepo.getById(e.sessionExercise.exerciseId);
+      drafts.add(_FreestyleDraftExercise(
+        exercise: ex,
+        sessionExercise: e.sessionExercise,
+        sets: working,
+      ));
+    }
+    if (drafts.isEmpty || !mounted) return;
+
+    final name = await _askTemplateName(drafts);
+    if (name == null || !mounted) return;
+
+    final templateId = _uuid.v4();
+    final now = DateTime.now();
+    final template = WorkoutTemplate(
+      id: templateId,
+      name: name,
+      createdAt: now,
+      updatedAt: now,
+    );
+    final tewList = <TemplateExerciseWithSets>[];
+    for (var i = 0; i < drafts.length; i++) {
+      final d = drafts[i];
+      final teId = _uuid.v4();
+      tewList.add(TemplateExerciseWithSets(
+        exercise: WorkoutTemplateExercise(
+          id: teId,
+          templateId: templateId,
+          exerciseId: d.sessionExercise.exerciseId,
+          orderIndex: i,
+          targetSets: d.sets.length,
+          restSeconds: d.sessionExercise.restSeconds,
+        ),
+        sets: [
+          for (var j = 0; j < d.sets.length; j++)
+            TemplateExerciseSet(
+              id: _uuid.v4(),
+              templateExerciseId: teId,
+              setIndex: j,
+              plannedReps: d.sets[j].reps,
+              // Bodyweight exercises carry no planned load in templates.
+              plannedWeightKg: (d.exercise?.useBodyweight ?? false)
+                  ? null
+                  : d.sets[j].weightKg,
+            ),
+        ],
+      ));
+    }
+    final tplRepo = ref.read(templateRepositoryProvider);
+    await tplRepo.upsertTemplate(template);
+    await tplRepo.setTemplateExercises(templateId, tewList);
+    ref.read(syncServiceProvider).pushTemplate(templateId).ignore();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Template « $name » enregistré')),
+      );
+    }
+  }
+
+  /// Bottom sheet: shows a per-exercise recap of what was done and asks for a
+  /// template name. Returns the trimmed name, or null if the user skips.
+  Future<String?> _askTemplateName(
+      List<_FreestyleDraftExercise> drafts) async {
+    final controller =
+        TextEditingController(text: 'Freestyle ${fmtDate(DateTime.now())}');
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetCtx) {
+        final cs = Theme.of(sheetCtx).colorScheme;
+        return SafeArea(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+                16, 16, 16, MediaQuery.of(sheetCtx).viewInsets.bottom + 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('Ajouter aux templates',
+                    style: Theme.of(sheetCtx).textTheme.titleLarge),
+                const SizedBox(height: 4),
+                Text(
+                  'Réutilise cette séance freestyle quand tu veux.',
+                  style: Theme.of(sheetCtx).textTheme.bodySmall?.copyWith(
+                        color: cs.onSurfaceVariant,
+                      ),
+                ),
+                const SizedBox(height: 14),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: cs.surfaceContainer,
+                        borderRadius:
+                            BorderRadius.circular(AppTokens.radiusM),
+                        border: Border.all(color: cs.outlineVariant),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          for (final d in drafts) ...[
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 4),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    d.exercise?.name ?? 'Exercice',
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w700),
+                                  ),
+                                  Text(
+                                    _draftSummaryLine(d),
+                                    style: TextStyle(
+                                      color: cs.onSurfaceVariant,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: controller,
+                  decoration: const InputDecoration(
+                    labelText: 'Nom du template',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => Navigator.pop(sheetCtx),
+                        child: const Text('Plus tard'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () =>
+                            Navigator.pop(sheetCtx, controller.text.trim()),
+                        child: const Text('Enregistrer'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    controller.dispose();
+    if (result == null || result.isEmpty) return null;
+    return result;
+  }
+
+  /// Compact recap of a draft exercise's working sets, e.g. "4×10 @ 60kg" when
+  /// uniform, or "10×60, 8×60, …" when the sets differ.
+  String _draftSummaryLine(_FreestyleDraftExercise d) {
+    final sets = d.sets;
+    final bw = d.exercise?.useBodyweight ?? false;
+    final allSame = sets.every((s) =>
+        s.reps == sets.first.reps && s.weightKg == sets.first.weightKg);
+    if (allSame) {
+      final w = sets.first.weightKg;
+      return '${sets.length}×${sets.first.reps}'
+          '${bw ? '' : ' @ ${fmtKg(w)}kg'}';
+    }
+    return sets
+        .map((s) => '${s.reps}${bw ? '' : '×${fmtKg(s.weightKg)}'}')
+        .join(', ');
   }
 
   Future<void> _showFullPhoto(File f) async {
@@ -1066,4 +1297,48 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
 
 
 enum _ExitAction { pause, finish, abandon }
+
+/// One exercise of a freestyle session being turned into a template: its
+/// (possibly null) catalog entry plus the working sets actually performed.
+class _FreestyleDraftExercise {
+  final Exercise? exercise;
+  final SessionExercise sessionExercise;
+  final List<SetEntry> sets;
+  const _FreestyleDraftExercise({
+    required this.exercise,
+    required this.sessionExercise,
+    required this.sets,
+  });
+}
+
+/// Small "+" disc sitting right after the set dots: appends one extra set
+/// slot to the current exercise so the user can do more sets than planned
+/// without leaving the screen. Matches the dot sizing so the strip stays even.
+class _AddSetButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _AddSetButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: 'Ajouter une série',
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: Container(
+          width: 26,
+          height: 26,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: cs.primary.withOpacity(0.12),
+            border: Border.all(color: cs.primary, width: 1.5),
+          ),
+          child: Icon(Icons.add, size: 16, color: cs.primary),
+        ),
+      ),
+    );
+  }
+}
 

@@ -12,12 +12,19 @@ import '../../../domain/models/workout_template.dart';
 class PlanCard extends StatelessWidget {
   final List<TemplateExerciseSet> plan;
   final ProgressionTarget target;
+
+  /// Vrai s'il existe un historique d'entraînement. Dans ce cas la cible du
+  /// moteur prescrit la séance (reset reps + montée de charge), donc on
+  /// l'affiche au lieu du plan figé du template — cohérent avec le
+  /// pré-remplissage des séries (voir computeSetDefault).
+  final bool hasHistory;
   final String Function(double) formatWeight;
   final String Function(List<TemplateExerciseSet>) formatPlanLine;
   const PlanCard({
     super.key,
     required this.plan,
     required this.target,
+    required this.hasHistory,
     required this.formatWeight,
     required this.formatPlanLine,
   });
@@ -26,8 +33,11 @@ class PlanCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final hasPlan = plan.isNotEmpty;
+    // Le plan figé n'est montré que sur la toute première séance ; dès qu'il y
+    // a un historique, on affiche la prescription du moteur.
+    final showRawPlan = hasPlan && !hasHistory;
     final title = hasPlan ? 'PLAN' : 'CIBLE';
-    final body = hasPlan
+    final body = showRawPlan
         ? formatPlanLine(plan)
         : '${target.targetSets}×${target.targetReps} @ '
             '${formatWeight(target.targetWeightKg)} kg';

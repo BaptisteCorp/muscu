@@ -675,7 +675,9 @@ class _PastSessionSheetState extends State<_PastSessionSheet> {
   void initState() {
     super.initState();
     final now = DateTime.now();
-    _date = DateTime(now.year, now.month, now.day - 1, 18);
+    // Heure neutre (midi) : on ne saisit plus l'heure, seules la date et la
+    // durée comptent. Midi évite tout effet de bord de journée.
+    _date = DateTime(now.year, now.month, now.day - 1, 12);
   }
 
   Future<void> _pickDate() async {
@@ -687,14 +689,9 @@ class _PastSessionSheetState extends State<_PastSessionSheet> {
     );
     if (picked == null) return;
     if (!mounted) return;
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(_date),
-    );
-    if (time == null) return;
     setState(() {
-      _date = DateTime(
-          picked.year, picked.month, picked.day, time.hour, time.minute);
+      // On garde l'heure neutre de midi, sans demander l'heure à l'utilisateur.
+      _date = DateTime(picked.year, picked.month, picked.day, 12);
     });
   }
 
@@ -818,6 +815,5 @@ String _formatDate(DateTime d) {
     'Samedi',
     'Dimanche'
   ][d.weekday - 1];
-  return '$weekday ${d.day} ${_monthName(d.month)} '
-      '${d.year} ${fmtTime(d)}';
+  return '$weekday ${d.day} ${_monthName(d.month)} ${d.year}';
 }

@@ -1,14 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:uuid/uuid.dart';
 
 import '../../core/providers.dart';
-import '../../core/utils/formatters.dart';
-import '../../data/sync/sync_service.dart';
-import '../../domain/models/enums.dart';
 import '../../domain/models/exercise.dart';
-
-const _uuid = Uuid();
+import '../library/exercises/quick_create_exercise_form.dart';
 
 /// Substitution rapide en cours de séance.
 ///
@@ -157,7 +152,7 @@ class _QuickSwapSheetState extends ConsumerState<QuickSwapSheet> {
     final ex = await showModalBottomSheet<Exercise>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => const _QuickCreateForm(),
+      builder: (_) => const QuickCreateExerciseForm(ctaLabel: 'Créer & substituer'),
     );
     if (ex != null && context.mounted) Navigator.pop(context, ex);
   }
@@ -195,102 +190,3 @@ class _SuggestionCard extends StatelessWidget {
   }
 }
 
-class _QuickCreateForm extends ConsumerStatefulWidget {
-  const _QuickCreateForm();
-  @override
-  ConsumerState<_QuickCreateForm> createState() => _QuickCreateFormState();
-}
-
-class _QuickCreateFormState extends ConsumerState<_QuickCreateForm> {
-  final _nameCtrl = TextEditingController();
-  MuscleGroup _muscle = MuscleGroup.chest;
-  Equipment _equipment = Equipment.barbell;
-  bool _showErrors = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-            16, 16, 16, MediaQuery.of(context).viewInsets.bottom + 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('Création rapide',
-                style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _nameCtrl,
-              autofocus: true,
-              onChanged: (_) {
-                if (_showErrors) setState(() {});
-              },
-              decoration: InputDecoration(
-                labelText: 'Nom',
-                border: const OutlineInputBorder(),
-                errorText: _showErrors && _nameCtrl.text.trim().isEmpty
-                    ? 'Le nom est requis'
-                    : null,
-              ),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<MuscleGroup>(
-              value: _muscle,
-              decoration: const InputDecoration(
-                labelText: 'Muscle principal',
-                border: OutlineInputBorder(),
-              ),
-              items: [
-                for (final m in MuscleGroup.values)
-                  DropdownMenuItem(value: m, child: Text(muscleLabel(m))),
-              ],
-              onChanged: (v) => setState(() => _muscle = v!),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<Equipment>(
-              value: _equipment,
-              decoration: const InputDecoration(
-                labelText: 'Équipement',
-                border: OutlineInputBorder(),
-              ),
-              items: [
-                for (final e in Equipment.values)
-                  DropdownMenuItem(value: e, child: Text(e.label)),
-              ],
-              onChanged: (v) => setState(() => _equipment = v!),
-            ),
-            const SizedBox(height: 16),
-            FilledButton(
-              onPressed: () async {
-                final name = _nameCtrl.text.trim();
-                if (name.isEmpty) {
-                  setState(() => _showErrors = true);
-                  return;
-                }
-                final ex = Exercise(
-                  id: _uuid.v4(),
-                  name: name,
-                  category: categoryFromMuscle(_muscle),
-                  primaryMuscle: _muscle,
-                  secondaryMuscles: const [],
-                  equipment: _equipment,
-                  isCustom: true,
-                  targetRepRangeMin: 8,
-                  targetRepRangeMax: 12,
-                  startingWeightKg:
-                      _equipment == Equipment.bodyweight ? 0.0 : 20.0,
-                  updatedAt: DateTime.now(),
-                );
-                await ref.read(exerciseRepositoryProvider).upsert(ex);
-                ref.read(syncServiceProvider).pushExercise(ex.id).ignore();
-                if (mounted) Navigator.pop(context, ex);
-              },
-              child: const Text('Créer & substituer'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-}
