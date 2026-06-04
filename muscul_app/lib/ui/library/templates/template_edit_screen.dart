@@ -146,18 +146,18 @@ class _TemplateEditScreenState extends ConsumerState<TemplateEditScreen> {
     }
     final discard = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         title: const Text('Annuler les modifications ?'),
         content: const Text(
             'Le template ne peut pas être enregistré (nom manquant ou aucun exercice). '
             'Voulez-vous abandonner les modifications ?'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(dialogCtx, false),
             child: const Text('Continuer'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(dialogCtx, true),
             child: const Text('Abandonner'),
           ),
         ],
@@ -170,14 +170,14 @@ class _TemplateEditScreenState extends ConsumerState<TemplateEditScreen> {
     if (_initial == null) return;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         title: const Text('Supprimer ce template ?'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
+              onPressed: () => Navigator.pop(dialogCtx, false),
               child: const Text('Annuler')),
           FilledButton(
-              onPressed: () => Navigator.pop(context, true),
+              onPressed: () => Navigator.pop(dialogCtx, true),
               child: const Text('Supprimer')),
         ],
       ),

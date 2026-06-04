@@ -643,7 +643,7 @@ class _StepperButton extends StatelessWidget {
 void _showRpeInfo(BuildContext context, bool useRir) {
   showDialog(
     context: context,
-    builder: (_) => AlertDialog(
+    builder: (dialogCtx) => AlertDialog(
       title: Text(useRir
           ? 'RIR — Reps In Reserve'
           : 'RPE — Rate of Perceived Exertion'),
@@ -687,7 +687,7 @@ void _showRpeInfo(BuildContext context, bool useRir) {
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context),
+          onPressed: () => Navigator.pop(dialogCtx),
           child: const Text('OK'),
         ),
       ],

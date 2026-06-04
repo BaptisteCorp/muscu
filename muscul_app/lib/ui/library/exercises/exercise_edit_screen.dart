@@ -260,18 +260,18 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
     }
     final discard = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         title: const Text('Annuler les modifications ?'),
         content: const Text(
             'L\'exercice ne peut pas être enregistré (champs invalides ou nom manquant). '
             'Voulez-vous abandonner les modifications ?'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(dialogCtx, false),
             child: const Text('Continuer'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(dialogCtx, true),
             child: const Text('Abandonner'),
           ),
         ],
@@ -299,16 +299,16 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
     if (_initial == null || !_initial!.isCustom) return;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         title: const Text('Supprimer cet exercice ?'),
         content: const Text(
             'L\'historique des séances reste accessible. L\'exercice ne sera plus proposé.'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
+              onPressed: () => Navigator.pop(dialogCtx, false),
               child: const Text('Annuler')),
           FilledButton(
-              onPressed: () => Navigator.pop(context, true),
+              onPressed: () => Navigator.pop(dialogCtx, true),
               child: const Text('Supprimer')),
         ],
       ),
@@ -741,12 +741,12 @@ class _InfoIconBtn extends StatelessWidget {
       tooltip: title,
       onPressed: () => showDialog(
         context: context,
-        builder: (_) => AlertDialog(
+        builder: (dialogCtx) => AlertDialog(
           title: Text(title),
           content: Text(body),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () => Navigator.pop(dialogCtx),
               child: const Text('OK'),
             ),
           ],

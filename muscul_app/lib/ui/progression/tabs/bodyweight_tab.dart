@@ -329,16 +329,19 @@ class _BodyweightTile extends ConsumerWidget {
       confirmDismiss: (_) async {
         return await showDialog<bool>(
               context: context,
-              builder: (_) => AlertDialog(
+              // Use the dialog's own context to pop — popping with the tile's
+              // (outer) context targets the shell Navigator and tears down the
+              // whole page → black screen.
+              builder: (dialogCtx) => AlertDialog(
                 title: const Text('Supprimer cette saisie ?'),
                 content: Text('Le poids du ${entry.date} sera retiré.'),
                 actions: [
                   TextButton(
-                    onPressed: () => Navigator.pop(context, false),
+                    onPressed: () => Navigator.pop(dialogCtx, false),
                     child: const Text('Annuler'),
                   ),
                   FilledButton(
-                    onPressed: () => Navigator.pop(context, true),
+                    onPressed: () => Navigator.pop(dialogCtx, true),
                     child: const Text('Supprimer'),
                   ),
                 ],
@@ -375,121 +378,136 @@ Future<void> _logBodyweight(
   WidgetRef ref, {
   BodyweightEntry? existing,
 }) async {
-  var date = existing != null
-      ? BodyweightEntry.parseDate(existing.date)
-      : DateTime.now();
-  final weightCtrl = TextEditingController(
-    text: existing?.weightKg.toStringAsFixed(1) ?? '',
-  );
-  final noteCtrl = TextEditingController(text: existing?.note ?? '');
-  final repo = ref.read(bodyweightRepositoryProvider);
-
   final saved = await showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
-    builder: (sheetCtx) {
-      return StatefulBuilder(
-        builder: (sheetCtx, setSheetState) => SafeArea(
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(
-                16, 16, 16, MediaQuery.of(sheetCtx).viewInsets.bottom + 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  existing == null ? 'Logger mon poids' : 'Modifier la saisie',
-                  style: Theme.of(sheetCtx).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 12),
-                ListTile(
-                  leading: const Icon(Icons.calendar_today),
-                  title: Text(
-                    '${date.day.toString().padLeft(2, '0')}/'
-                    '${date.month.toString().padLeft(2, '0')}/${date.year}',
-                  ),
-                  trailing: existing == null
-                      ? TextButton(
-                          onPressed: () async {
-                            final picked = await showDatePicker(
-                              context: sheetCtx,
-                              initialDate: date,
-                              firstDate: DateTime.now()
-                                  .subtract(const Duration(days: 365 * 5)),
-                              lastDate: DateTime.now(),
-                            );
-                            if (picked != null) {
-                              setSheetState(() => date = picked);
-                            }
-                          },
-                          child: const Text('Changer'),
-                        )
-                      : null,
-                  contentPadding: EdgeInsets.zero,
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: weightCtrl,
-                  autofocus: true,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                    labelText: 'Poids',
-                    suffixText: 'kg',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: noteCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Note (optionnel)',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                FilledButton(
-                  onPressed: () async {
-                    final v = double.tryParse(
-                        weightCtrl.text.replaceAll(',', '.'));
-                    if (v == null || v <= 0) {
-                      ScaffoldMessenger.of(sheetCtx).showSnackBar(
-                        const SnackBar(content: Text('Poids invalide')),
-                      );
-                      return;
-                    }
-                    final dateStr = BodyweightEntry.formatDate(date);
-                    await repo.upsert(BodyweightEntry(
-                      date: dateStr,
-                      weightKg: v,
-                      note: noteCtrl.text.trim().isEmpty
-                          ? null
-                          : noteCtrl.text.trim(),
-                      updatedAt: DateTime.now(),
-                    ));
-                    ref
-                        .read(syncServiceProvider)
-                        .pushBodyweight(dateStr)
-                        .ignore();
-                    if (sheetCtx.mounted) {
-                      Navigator.pop(sheetCtx, true);
-                    }
-                  },
-                  child: const Text('Enregistrer'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    },
+    builder: (_) => _BodyweightEntrySheet(existing: existing),
   );
-
-  weightCtrl.dispose();
-  noteCtrl.dispose();
   if (saved == true && context.mounted) {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Poids enregistré')),
+    );
+  }
+}
+
+/// Stateful sheet owning its [TextEditingController]s so they live exactly as
+/// long as the sheet and are disposed in [dispose]. Disposing controllers
+/// inline right after `showModalBottomSheet` returns crashes, because the exit
+/// transition still rebuilds the fields with the now-dead controllers.
+class _BodyweightEntrySheet extends ConsumerStatefulWidget {
+  final BodyweightEntry? existing;
+  const _BodyweightEntrySheet({this.existing});
+
+  @override
+  ConsumerState<_BodyweightEntrySheet> createState() =>
+      _BodyweightEntrySheetState();
+}
+
+class _BodyweightEntrySheetState extends ConsumerState<_BodyweightEntrySheet> {
+  late DateTime _date = widget.existing != null
+      ? BodyweightEntry.parseDate(widget.existing!.date)
+      : DateTime.now();
+  late final TextEditingController _weightCtrl = TextEditingController(
+    text: widget.existing?.weightKg.toStringAsFixed(1) ?? '',
+  );
+  late final TextEditingController _noteCtrl =
+      TextEditingController(text: widget.existing?.note ?? '');
+
+  @override
+  void dispose() {
+    _weightCtrl.dispose();
+    _noteCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final v = double.tryParse(_weightCtrl.text.replaceAll(',', '.'));
+    if (v == null || v <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Poids invalide')),
+      );
+      return;
+    }
+    final dateStr = BodyweightEntry.formatDate(_date);
+    await ref.read(bodyweightRepositoryProvider).upsert(BodyweightEntry(
+          date: dateStr,
+          weightKg: v,
+          note: _noteCtrl.text.trim().isEmpty ? null : _noteCtrl.text.trim(),
+          updatedAt: DateTime.now(),
+        ));
+    ref.read(syncServiceProvider).pushBodyweight(dateStr).ignore();
+    if (mounted) Navigator.pop(context, true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final existing = widget.existing;
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+            16, 16, 16, MediaQuery.of(context).viewInsets.bottom + 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              existing == null ? 'Logger mon poids' : 'Modifier la saisie',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 12),
+            ListTile(
+              leading: const Icon(Icons.calendar_today),
+              title: Text(
+                '${_date.day.toString().padLeft(2, '0')}/'
+                '${_date.month.toString().padLeft(2, '0')}/${_date.year}',
+              ),
+              trailing: existing == null
+                  ? TextButton(
+                      onPressed: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: _date,
+                          firstDate: DateTime.now()
+                              .subtract(const Duration(days: 365 * 5)),
+                          lastDate: DateTime.now(),
+                        );
+                        if (picked != null) {
+                          setState(() => _date = picked);
+                        }
+                      },
+                      child: const Text('Changer'),
+                    )
+                  : null,
+              contentPadding: EdgeInsets.zero,
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _weightCtrl,
+              autofocus: true,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Poids',
+                suffixText: 'kg',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _noteCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Note (optionnel)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: _save,
+              child: const Text('Enregistrer'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

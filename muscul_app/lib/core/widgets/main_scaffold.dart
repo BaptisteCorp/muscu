@@ -56,7 +56,7 @@ class _MainScaffoldState extends ConsumerState<MainScaffold> {
           label: 'Détails',
           onPressed: () => showDialog<void>(
             context: context,
-            builder: (_) => AlertDialog(
+            builder: (dialogCtx) => AlertDialog(
               title: const Text('Erreur de synchronisation'),
               content: SingleChildScrollView(
                 child: SelectableText(
@@ -65,7 +65,7 @@ class _MainScaffoldState extends ConsumerState<MainScaffold> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () => Navigator.pop(context),
+                  onPressed: () => Navigator.pop(dialogCtx),
                   child: const Text('OK'),
                 ),
               ],

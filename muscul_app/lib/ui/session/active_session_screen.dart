@@ -861,52 +861,12 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
     final repo = ref.read(sessionRepositoryProvider);
     final detail = await repo.getDetail(widget.sessionId);
     if (detail == null || !mounted) return;
-    final controller =
-        TextEditingController(text: detail.session.notes ?? '');
     final result = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
-      builder: (sheetCtx) => SafeArea(
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(
-              16, 16, 16, MediaQuery.of(sheetCtx).viewInsets.bottom + 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('Note de séance',
-                  style: Theme.of(sheetCtx).textTheme.titleMedium),
-              const SizedBox(height: 4),
-              Text(
-                'Sommeil, fatigue, douleurs, sensations…',
-                style: Theme.of(sheetCtx).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(sheetCtx)
-                          .colorScheme
-                          .onSurfaceVariant,
-                    ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: controller,
-                autofocus: true,
-                maxLines: 6,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  hintText: "Ex: bien dormi, pas mal au dos cette fois",
-                ),
-              ),
-              const SizedBox(height: 16),
-              FilledButton(
-                onPressed: () =>
-                    Navigator.pop(sheetCtx, controller.text.trim()),
-                child: const Text('Enregistrer'),
-              ),
-            ],
-          ),
-        ),
-      ),
+      builder: (_) =>
+          _SessionNoteSheet(initialNote: detail.session.notes ?? ''),
     );
-    controller.dispose();
     if (result == null) return;
     final updated = detail.session.copyWith(
       notes: result.isEmpty ? null : result,
@@ -1087,7 +1047,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
   Future<_ExitAction?> _confirmExit(BuildContext context) async {
     return showModalBottomSheet<_ExitAction>(
       context: context,
-      builder: (_) => SafeArea(
+      builder: (sheetCtx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1096,26 +1056,26 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
               title: const Text('Mettre en pause'),
               subtitle: const Text(
                   'Reprenez plus tard depuis l\'accueil. Aucune perte.'),
-              onTap: () => Navigator.pop(context, _ExitAction.pause),
+              onTap: () => Navigator.pop(sheetCtx, _ExitAction.pause),
             ),
             ListTile(
               leading: const Icon(Icons.check_circle_outline),
               title: const Text('Terminer la séance'),
               subtitle: const Text('La séance est sauvegardée comme finie.'),
-              onTap: () => Navigator.pop(context, _ExitAction.finish),
+              onTap: () => Navigator.pop(sheetCtx, _ExitAction.finish),
             ),
             ListTile(
               leading: const Icon(Icons.delete_forever_outlined),
               title: const Text('Abandonner la séance'),
               subtitle: const Text(
                   'Supprime cette séance et tout ce qui a été saisi.'),
-              onTap: () => Navigator.pop(context, _ExitAction.abandon),
+              onTap: () => Navigator.pop(sheetCtx, _ExitAction.abandon),
             ),
             const Divider(),
             ListTile(
               leading: const Icon(Icons.arrow_back_rounded),
               title: const Text('Continuer la séance'),
-              onTap: () => Navigator.pop(context),
+              onTap: () => Navigator.pop(sheetCtx),
             ),
           ],
         ),
@@ -1126,20 +1086,20 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
   Future<bool> _confirmAbandon() async {
     return await showDialog<bool>(
           context: context,
-          builder: (_) => AlertDialog(
+          builder: (dialogCtx) => AlertDialog(
             title: const Text('Abandonner la séance ?'),
             content: const Text(
                 "Toutes les séries saisies seront perdues. Cette action est irréversible."),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(context, false),
+                onPressed: () => Navigator.pop(dialogCtx, false),
                 child: const Text('Annuler'),
               ),
               FilledButton(
                 style: FilledButton.styleFrom(
-                  backgroundColor: Theme.of(context).colorScheme.error,
+                  backgroundColor: Theme.of(dialogCtx).colorScheme.error,
                 ),
-                onPressed: () => Navigator.pop(context, true),
+                onPressed: () => Navigator.pop(dialogCtx, true),
                 child: const Text('Abandonner'),
               ),
             ],
@@ -1328,6 +1288,68 @@ class _TemplateNameSheetState extends State<_TemplateNameSheet> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Bottom sheet to edit the session note. Owns its [TextEditingController] so
+/// it's disposed only when the sheet is truly gone (not right after the modal
+/// future resolves, which still runs the exit animation over the field).
+class _SessionNoteSheet extends StatefulWidget {
+  final String initialNote;
+  const _SessionNoteSheet({required this.initialNote});
+
+  @override
+  State<_SessionNoteSheet> createState() => _SessionNoteSheetState();
+}
+
+class _SessionNoteSheetState extends State<_SessionNoteSheet> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initialNote);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+            16, 16, 16, MediaQuery.of(context).viewInsets.bottom + 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Note de séance',
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 4),
+            Text(
+              'Sommeil, fatigue, douleurs, sensations…',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _controller,
+              autofocus: true,
+              maxLines: 6,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: "Ex: bien dormi, pas mal au dos cette fois",
+              ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, _controller.text.trim()),
+              child: const Text('Enregistrer'),
+            ),
+          ],
         ),
       ),
     );
