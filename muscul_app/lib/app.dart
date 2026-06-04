@@ -130,6 +130,10 @@ class _MusculAppState extends ConsumerState<MusculApp>
       },
       orElse: () => ThemeMode.system,
     );
+    final palette = settingsAsync.maybeWhen(
+      data: (s) => s.palette,
+      orElse: () => AppPalette.crimson,
+    );
 
     // Trigger a sync as soon as we transition into a logged-in state. This
     // protects users who tap "Connexion" but forget to hit "Sync now".
@@ -145,8 +149,8 @@ class _MusculAppState extends ConsumerState<MusculApp>
 
     return MaterialApp.router(
       title: 'Reps',
-      theme: AppTheme.light(),
-      darkTheme: AppTheme.dark(),
+      theme: AppTheme.light(palette),
+      darkTheme: AppTheme.dark(palette),
       themeMode: mode,
       routerConfig: router,
       debugShowCheckedModeBanner: false,

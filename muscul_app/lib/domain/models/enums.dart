@@ -46,6 +46,11 @@ enum WeightUnit { kg, lb }
 
 enum AppThemeMode { system, light, dark }
 
+/// Accent colour palette for the app theme. [crimson] is the original
+/// red/amber/lime look (default); the others reskin the accent colours while
+/// keeping the surface design. Stored as a device-local preference.
+enum AppPalette { crimson, ocean, emerald, violet, amber }
+
 enum SyncStatus { pending, synced, conflict }
 
 T enumByName<T extends Enum>(List<T> values, String name, {T? fallback}) {

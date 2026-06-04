@@ -34,7 +34,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(QueryExecutor e) : super(e);
 
   @override
-  int get schemaVersion => 9;
+  int get schemaVersion => 10;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -110,6 +110,10 @@ class AppDatabase extends _$AppDatabase {
               await customStatement(
                   'ALTER TABLE exercises DROP COLUMN progression_strategy;');
             } catch (_) {/* ignore */}
+          }
+          if (from < 10) {
+            // Accent colour palette preference (device-local).
+            await m.addColumn(userSettingsTable, userSettingsTable.palette);
           }
         },
         onCreate: (m) async {

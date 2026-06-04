@@ -243,4 +243,6 @@ UserSettings settingsFromRow(UserSettingsRow row) => UserSettings(
       userBodyweightKg: row.userBodyweightKg,
       themeMode: enumByName(AppThemeMode.values, row.themeMode,
           fallback: AppThemeMode.system),
+      palette: enumByName(AppPalette.values, row.palette,
+          fallback: AppPalette.crimson),
     );

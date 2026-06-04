@@ -7,6 +7,7 @@ class UserSettings {
   final bool useRirInsteadOfRpe;
   final double? userBodyweightKg;
   final AppThemeMode themeMode;
+  final AppPalette palette;
 
   const UserSettings({
     this.defaultIncrementKg = 2.5,
@@ -15,6 +16,7 @@ class UserSettings {
     this.useRirInsteadOfRpe = false,
     this.userBodyweightKg,
     this.themeMode = AppThemeMode.system,
+    this.palette = AppPalette.crimson,
   });
 
   UserSettings copyWith({
@@ -25,6 +27,7 @@ class UserSettings {
     double? userBodyweightKg,
     bool clearUserBodyweightKg = false,
     AppThemeMode? themeMode,
+    AppPalette? palette,
   }) {
     return UserSettings(
       defaultIncrementKg: defaultIncrementKg ?? this.defaultIncrementKg,
@@ -35,6 +38,7 @@ class UserSettings {
           ? null
           : (userBodyweightKg ?? this.userBodyweightKg),
       themeMode: themeMode ?? this.themeMode,
+      palette: palette ?? this.palette,
     );
   }
 }

@@ -55,6 +55,7 @@ class LocalSettingsRepository implements SettingsRepository {
         useRirInsteadOfRpe: Value(s.useRirInsteadOfRpe),
         userBodyweightKg: Value(s.userBodyweightKg),
         themeMode: Value(s.themeMode.name),
+        palette: Value(s.palette.name),
       ),
     );
   }

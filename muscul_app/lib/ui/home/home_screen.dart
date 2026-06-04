@@ -9,6 +9,7 @@ import '../../core/utils/formatters.dart';
 import '../../data/auth/auth_service.dart';
 import '../../data/sync/sync_service.dart';
 import '../../domain/models/bodyweight_entry.dart';
+import '../../domain/models/enums.dart';
 import '../../domain/models/session.dart';
 import '../../domain/models/workout_template.dart';
 import '../session/start_session_controller.dart';
@@ -501,9 +502,111 @@ class _SettingsSheet extends ConsumerWidget {
                 ),
               ),
             ),
+            const Divider(height: 24),
+            Text('Apparence',
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 10),
+            SegmentedButton<AppThemeMode>(
+              segments: const [
+                ButtonSegment(
+                    value: AppThemeMode.system, label: Text('Système')),
+                ButtonSegment(
+                    value: AppThemeMode.light, label: Text('Clair')),
+                ButtonSegment(
+                    value: AppThemeMode.dark, label: Text('Sombre')),
+              ],
+              selected: {s.themeMode},
+              showSelectedIcon: false,
+              onSelectionChanged: (sel) async {
+                await ref
+                    .read(settingsRepositoryProvider)
+                    .save(s.copyWith(themeMode: sel.first));
+                ref.read(syncServiceProvider).pushSettings().ignore();
+              },
+            ),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Couleur',
+                  style: Theme.of(context).textTheme.labelLarge),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 14,
+              runSpacing: 12,
+              children: [
+                for (final p in AppPalette.values)
+                  _PaletteSwatch(
+                    palette: p,
+                    selected: s.palette == p,
+                    // Palette is a device-local preference — no cloud push.
+                    onTap: () => ref
+                        .read(settingsRepositoryProvider)
+                        .save(s.copyWith(palette: p)),
+                  ),
+              ],
+            ),
             const SizedBox(height: 8),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// A tappable colour disc + label used in the settings "Couleur" picker.
+class _PaletteSwatch extends StatelessWidget {
+  final AppPalette palette;
+  final bool selected;
+  final VoidCallback onTap;
+  const _PaletteSwatch({
+    required this.palette,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: palette.seed,
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: selected ? cs.onSurface : Colors.transparent,
+                width: 3,
+              ),
+            ),
+            child: selected
+                ? const Icon(Icons.check_rounded,
+                    color: Colors.white, size: 24)
+                : null,
+          ),
+          const SizedBox(height: 5),
+          SizedBox(
+            width: 66,
+            child: Text(
+              palette.label,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                color: selected ? cs.onSurface : cs.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

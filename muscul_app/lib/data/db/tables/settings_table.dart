@@ -12,6 +12,8 @@ class UserSettingsTable extends Table {
       boolean().withDefault(const Constant(false))();
   RealColumn get userBodyweightKg => real().nullable()();
   TextColumn get themeMode => text().withDefault(const Constant('system'))();
+  // Accent colour palette. Device-local (not synced to the cloud).
+  TextColumn get palette => text().withDefault(const Constant('crimson'))();
 
   @override
   Set<Column> get primaryKey => {id};

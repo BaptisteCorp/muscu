@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../domain/models/enums.dart';
+
 /// Design tokens for Muscul. Built around a single rule: the user is in a gym,
 /// hands sweaty, phone often on a bench. Everything must be readable at arm's
 /// length under harsh fluorescent lighting and tappable without precision.
@@ -61,8 +63,33 @@ class AppTokens {
   static const double radiusXL = 20;
 }
 
+/// Accent seed + label per palette. The surface/neutral colours stay the same
+/// across palettes (see [AppTheme._seededScheme]); only the accents change.
+extension AppPaletteX on AppPalette {
+  /// Seed used to derive the accent colours (and the swatch shown in settings).
+  Color get seed => switch (this) {
+        AppPalette.crimson => AppTokens.brandRed,
+        AppPalette.ocean => const Color(0xFF2E7DF6),
+        AppPalette.emerald => const Color(0xFF10B981),
+        AppPalette.violet => const Color(0xFF8B5CF6),
+        AppPalette.amber => const Color(0xFFF5A314),
+      };
+
+  String get label => switch (this) {
+        AppPalette.crimson => 'Rouge',
+        AppPalette.ocean => 'Bleu océan',
+        AppPalette.emerald => 'Émeraude',
+        AppPalette.violet => 'Violet',
+        AppPalette.amber => 'Ambre',
+      };
+}
+
 class AppTheme {
-  static ThemeData light() {
+  static ThemeData light(AppPalette palette) {
+    if (palette != AppPalette.crimson) {
+      return _build(_seededScheme(palette.seed, Brightness.light),
+          isDark: false);
+    }
     const scheme = ColorScheme(
       brightness: Brightness.light,
       primary: AppTokens.brandRedDeep,
@@ -100,7 +127,11 @@ class AppTheme {
     return _build(scheme, isDark: false);
   }
 
-  static ThemeData dark() {
+  static ThemeData dark(AppPalette palette) {
+    if (palette != AppPalette.crimson) {
+      return _build(_seededScheme(palette.seed, Brightness.dark),
+          isDark: true);
+    }
     const scheme = ColorScheme(
       brightness: Brightness.dark,
       primary: AppTokens.brandRed,
@@ -136,6 +167,43 @@ class AppTheme {
       inversePrimary: AppTokens.brandRedDeep,
     );
     return _build(scheme, isDark: true);
+  }
+
+  /// Derive accent colours from [seed] (Material 3 tonal palette) but keep the
+  /// app's hand-tuned, OLED-friendly surface/neutral stack so every palette
+  /// shares the same look-and-feel — only the accents change.
+  static ColorScheme _seededScheme(Color seed, Brightness brightness) {
+    final s = ColorScheme.fromSeed(seedColor: seed, brightness: brightness);
+    if (brightness == Brightness.dark) {
+      return s.copyWith(
+        surface: AppTokens.darkBg,
+        onSurface: AppTokens.darkOnSurface,
+        surfaceContainerLowest: AppTokens.darkSurfaceLow,
+        surfaceContainerLow: AppTokens.darkSurface,
+        surfaceContainer: AppTokens.darkSurfaceContainer,
+        surfaceContainerHigh: AppTokens.darkSurfaceContainerHigh,
+        surfaceContainerHighest: AppTokens.darkSurfaceContainerHighest,
+        onSurfaceVariant: AppTokens.darkOnSurfaceVariant,
+        outline: AppTokens.darkOutline,
+        outlineVariant: AppTokens.darkOutlineVariant,
+        inverseSurface: AppTokens.lightSurface,
+        onInverseSurface: AppTokens.lightOnSurface,
+      );
+    }
+    return s.copyWith(
+      surface: AppTokens.lightSurface,
+      onSurface: AppTokens.lightOnSurface,
+      surfaceContainerLowest: Colors.white,
+      surfaceContainerLow: const Color(0xFFFAFAFC),
+      surfaceContainer: AppTokens.lightSurfaceContainer,
+      surfaceContainerHigh: AppTokens.lightSurfaceContainerHigh,
+      surfaceContainerHighest: const Color(0xFFDDDDE2),
+      onSurfaceVariant: AppTokens.lightOnSurfaceVariant,
+      outline: AppTokens.lightOutline,
+      outlineVariant: AppTokens.lightOutlineVariant,
+      inverseSurface: const Color(0xFF1F1F25),
+      onInverseSurface: const Color(0xFFF2F2F5),
+    );
   }
 
   static ThemeData _build(ColorScheme scheme, {required bool isDark}) {
