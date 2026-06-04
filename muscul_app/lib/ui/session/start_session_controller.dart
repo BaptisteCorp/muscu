@@ -78,7 +78,11 @@ Future<String> addExerciseToSession({
           replacedFromSessionExerciseId: replacedFromSessionExerciseId,
         ),
       );
-  // Fire-and-forget — see comment in startSession() above.
-  ref.read(syncServiceProvider).pushSessionExercise(id).ignore();
+  // Fire-and-forget — see comment in startSession() above. [ref] is dynamic
+  // here, so read into a typed local before calling the `.ignore()` extension:
+  // a dynamic-dispatched `.ignore()` throws NoSuchMethodError at runtime
+  // (extension methods aren't real instance methods).
+  final SyncService sync = ref.read(syncServiceProvider) as SyncService;
+  sync.pushSessionExercise(id).ignore();
   return id;
 }

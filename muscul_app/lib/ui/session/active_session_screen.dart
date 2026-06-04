@@ -954,17 +954,29 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
     // A freestyle session (no template) is often worth keeping. Offer to turn
     // what was just done into a reusable template, with a summary of the
     // sets/weights, before leaving the screen.
+    String? savedTemplateName;
     if (detail.session.templateId == null && hasAnyWorkingSet && mounted) {
-      await _offerSaveAsTemplate(detail);
+      savedTemplateName = await _offerSaveAsTemplate(detail);
     }
-    if (mounted) {
-      context.go('/home');
+    if (!mounted) return;
+    // Grab the (persistent, app-level) messenger before navigating, then show
+    // the confirmation AFTER the route swap. Inserting a SnackBar and tearing
+    // down this route in the same frame trips InheritedElement's
+    // "_dependents.isEmpty" assertion.
+    final messenger = ScaffoldMessenger.of(context);
+    context.go('/home');
+    if (savedTemplateName != null) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Template « $savedTemplateName » enregistré')),
+      );
     }
   }
 
   /// Builds a template draft from the just-finished freestyle session and, if
   /// the user confirms (and names it), persists it and pushes it to the cloud.
-  Future<void> _offerSaveAsTemplate(SessionDetail detail) async {
+  /// Returns the saved template's name (for the caller to confirm), or null if
+  /// nothing was saved.
+  Future<String?> _offerSaveAsTemplate(SessionDetail detail) async {
     final exRepo = ref.read(exerciseRepositoryProvider);
     final drafts = <_FreestyleDraftExercise>[];
     for (final e in detail.exercises) {
@@ -978,10 +990,10 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
         sets: working,
       ));
     }
-    if (drafts.isEmpty || !mounted) return;
+    if (drafts.isEmpty || !mounted) return null;
 
     final name = await _askTemplateName(drafts);
-    if (name == null || !mounted) return;
+    if (name == null || !mounted) return null;
 
     final templateId = _uuid.v4();
     final now = DateTime.now();
@@ -1023,117 +1035,25 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
     await tplRepo.upsertTemplate(template);
     await tplRepo.setTemplateExercises(templateId, tewList);
     ref.read(syncServiceProvider).pushTemplate(templateId).ignore();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Template « $name » enregistré')),
-      );
-    }
+    return name;
   }
 
   /// Bottom sheet: shows a per-exercise recap of what was done and asks for a
   /// template name. Returns the trimmed name, or null if the user skips.
   Future<String?> _askTemplateName(
       List<_FreestyleDraftExercise> drafts) async {
-    final controller =
-        TextEditingController(text: 'Freestyle ${fmtDate(DateTime.now())}');
+    final items = [
+      for (final d in drafts)
+        (name: d.exercise?.name ?? 'Exercice', summary: _draftSummaryLine(d)),
+    ];
     final result = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
-      builder: (sheetCtx) {
-        final cs = Theme.of(sheetCtx).colorScheme;
-        return SafeArea(
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(
-                16, 16, 16, MediaQuery.of(sheetCtx).viewInsets.bottom + 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text('Ajouter aux templates',
-                    style: Theme.of(sheetCtx).textTheme.titleLarge),
-                const SizedBox(height: 4),
-                Text(
-                  'Réutilise cette séance freestyle quand tu veux.',
-                  style: Theme.of(sheetCtx).textTheme.bodySmall?.copyWith(
-                        color: cs.onSurfaceVariant,
-                      ),
-                ),
-                const SizedBox(height: 14),
-                Flexible(
-                  child: SingleChildScrollView(
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: cs.surfaceContainer,
-                        borderRadius:
-                            BorderRadius.circular(AppTokens.radiusM),
-                        border: Border.all(color: cs.outlineVariant),
-                      ),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 10),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          for (final d in drafts) ...[
-                            Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 4),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    d.exercise?.name ?? 'Exercice',
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.w700),
-                                  ),
-                                  Text(
-                                    _draftSummaryLine(d),
-                                    style: TextStyle(
-                                      color: cs.onSurfaceVariant,
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                TextField(
-                  controller: controller,
-                  decoration: const InputDecoration(
-                    labelText: 'Nom du template',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextButton(
-                        onPressed: () => Navigator.pop(sheetCtx),
-                        child: const Text('Plus tard'),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: FilledButton(
-                        onPressed: () =>
-                            Navigator.pop(sheetCtx, controller.text.trim()),
-                        child: const Text('Enregistrer'),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+      builder: (_) => _TemplateNameSheet(
+        items: items,
+        initialName: 'Freestyle ${fmtDate(DateTime.now())}',
+      ),
     );
-    controller.dispose();
     if (result == null || result.isEmpty) return null;
     return result;
   }
@@ -1297,6 +1217,122 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
 
 
 enum _ExitAction { pause, finish, abandon }
+
+/// Bottom sheet asking for a template name with a recap of the freestyle
+/// session. A dedicated StatefulWidget so the [TextEditingController] lives
+/// exactly as long as the sheet and is disposed in [dispose] — disposing it
+/// inline right after `showModalBottomSheet` returns crashes, because the exit
+/// transition still rebuilds the TextField with the now-dead controller.
+class _TemplateNameSheet extends StatefulWidget {
+  final List<({String name, String summary})> items;
+  final String initialName;
+  const _TemplateNameSheet({required this.items, required this.initialName});
+
+  @override
+  State<_TemplateNameSheet> createState() => _TemplateNameSheetState();
+}
+
+class _TemplateNameSheetState extends State<_TemplateNameSheet> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initialName);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+            16, 16, 16, MediaQuery.of(context).viewInsets.bottom + 16),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Ajouter aux templates',
+                  style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 4),
+              Text(
+                'Réutilise cette séance freestyle quand tu veux.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: cs.onSurfaceVariant,
+                    ),
+              ),
+              const SizedBox(height: 14),
+              Container(
+                decoration: BoxDecoration(
+                  color: cs.surfaceContainer,
+                  borderRadius: BorderRadius.circular(AppTokens.radiusM),
+                  border: Border.all(color: cs.outlineVariant),
+                ),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (final it in widget.items)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              it.name,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w700),
+                            ),
+                            Text(
+                              it.summary,
+                              style: TextStyle(
+                                color: cs.onSurfaceVariant,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _controller,
+                decoration: const InputDecoration(
+                  labelText: 'Nom du template',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Plus tard'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () =>
+                          Navigator.pop(context, _controller.text.trim()),
+                      child: const Text('Enregistrer'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 /// One exercise of a freestyle session being turned into a template: its
 /// (possibly null) catalog entry plus the working sets actually performed.
