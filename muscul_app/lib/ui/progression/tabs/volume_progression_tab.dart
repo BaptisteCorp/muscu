@@ -74,12 +74,11 @@ class VolumeProgressionTab extends ConsumerWidget {
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text('Volume par groupe musculaire',
+            Text('Volume par semaine',
                 style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 4),
             Text(
-              "Semaine en cours (lundi → aujourd'hui) vs la précédente. "
-              "10+ séries/sem par muscle = recommandation hypertrophie.",
+              'Semaine en cours vs précédente.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
@@ -90,7 +89,10 @@ class VolumeProgressionTab extends ConsumerWidget {
               lastWeek: totalLastVol,
               thisSets: totalThisSets,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
+            Text('Évolution par muscle',
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
             for (final m in muscles)
               _MuscleVolumeRow(
                 muscle: m,
@@ -100,15 +102,6 @@ class VolumeProgressionTab extends ConsumerWidget {
                 lastSetsCount: lastSets[m] ?? 0,
                 trend: trend[m] ?? const [],
               ),
-            const SizedBox(height: 12),
-            Text(
-              "Volume = Σ(reps × kg) sans warm-up. "
-              "Sets/sem = nombre de séries effectives. "
-              "Sparkline = 8 dernières semaines.",
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-            ),
           ],
         );
       },

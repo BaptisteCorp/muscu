@@ -19,7 +19,7 @@ enum MuscleGroup {
   cardio,
 }
 
-enum Equipment { barbell, dumbbell, machine, cable, bodyweight, other }
+enum Equipment { barbell, dumbbell, machine, cable, rope, bodyweight, other }
 
 extension EquipmentLabel on Equipment {
   String get label {
@@ -32,6 +32,8 @@ extension EquipmentLabel on Equipment {
         return 'Machine';
       case Equipment.cable:
         return 'Poulie';
+      case Equipment.rope:
+        return 'Corde';
       case Equipment.bodyweight:
         return 'Poids du corps';
       case Equipment.other:

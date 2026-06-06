@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/providers.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/formatters.dart';
+import '../../../core/widgets/exercise_name_label.dart';
 import '../../../domain/models/exercise.dart';
 import '../../../domain/models/session.dart';
 
@@ -149,7 +150,11 @@ class _ExercisePicker extends StatelessWidget {
                         size: 16, color: Colors.green),
                   ),
                 Expanded(
-                  child: Text(e.name, overflow: TextOverflow.ellipsis),
+                  child: ExerciseNameLabel(
+                    name: e.name,
+                    equipment: e.equipment,
+                    maxLines: 1,
+                  ),
                 ),
               ],
             ),
@@ -235,35 +240,31 @@ class _ExerciseProgressionView extends ConsumerWidget {
             Text('Records perso',
                 style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
+            // Two cards filling the width — everything visible at a glance,
+            // no horizontal scroll.
             SizedBox(
-              height: 120,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
+              height: 108,
+              child: Row(
                 children: [
-                  _PrCard(
-                    label: 'Meilleur poids',
-                    value: '${fmtKg(prs.bestWeight)} kg',
-                    sub: prs.bestWeightReps > 0
-                        ? '× ${prs.bestWeightReps} reps'
-                            '${prs.bestWeightDate == null ? '' : ' • ${fmtDate(prs.bestWeightDate!)}'}'
-                        : null,
+                  Expanded(
+                    child: _PrCard(
+                      label: 'Meilleur poids',
+                      value: '${fmtKg(prs.bestWeight)} kg',
+                      sub: prs.bestWeightReps > 0
+                          ? '× ${prs.bestWeightReps} reps'
+                              '${prs.bestWeightDate == null ? '' : ' • ${fmtDate(prs.bestWeightDate!)}'}'
+                          : null,
+                    ),
                   ),
                   const SizedBox(width: 8),
-                  _PrCard(
-                    label: 'Top reps',
-                    value: '${prs.bestRepsCount} reps',
-                    sub: prs.bestRepsCount > 0
-                        ? '@ ${fmtKg(prs.bestRepsWeight)} kg'
-                            '${prs.bestRepsDate == null ? '' : ' • ${fmtDate(prs.bestRepsDate!)}'}'
-                        : null,
-                  ),
-                  const SizedBox(width: 8),
-                  _PrCard(
-                    label: 'Volume max',
-                    value: '${prs.volume.toStringAsFixed(0)} kg',
-                    sub: prs.volumeDate == null
-                        ? null
-                        : 'le ${fmtDate(prs.volumeDate!)}',
+                  Expanded(
+                    child: _PrCard(
+                      label: 'Volume max',
+                      value: '${prs.volume.toStringAsFixed(0)} kg',
+                      sub: prs.volumeDate == null
+                          ? null
+                          : 'le ${fmtDate(prs.volumeDate!)}',
+                    ),
                   ),
                 ],
               ),
@@ -321,78 +322,33 @@ class _ExerciseProgressionView extends ConsumerWidget {
             const SizedBox(height: 24),
             Text('Volume par séance',
                 style: Theme.of(context).textTheme.titleMedium),
-            Text(
-              'Σ(reps × kg) sur les séries non-échauffement.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: cs.onSurfaceVariant,
-                  ),
-            ),
             const SizedBox(height: 8),
             SizedBox(
               height: 200,
-              child: perSession.isEmpty
-                  ? const Center(child: Text('—'))
-                  : BarChart(
-                      BarChartData(
-                        barGroups: [
-                          for (final p in perSession)
-                            BarChartGroupData(
-                              x: p.index,
-                              barRods: [
-                                BarChartRodData(
-                                  toY: p.volume,
-                                  color: cs.primary,
-                                  width: 10,
-                                ),
-                              ],
-                            ),
-                        ],
-                        titlesData: const FlTitlesData(
-                          rightTitles: AxisTitles(),
-                          topTitles: AxisTitles(),
-                          bottomTitles: AxisTitles(
-                            sideTitles: SideTitles(showTitles: false),
-                          ),
-                        ),
-                        gridData: const FlGridData(
-                          drawVerticalLine: false,
-                        ),
-                      ),
-                    ),
-            ),
-            const SizedBox(height: 24),
-            Text('Top set par séance',
-                style: Theme.of(context).textTheme.titleMedium),
-            Text(
-              "La meilleure série de chaque séance : poids × reps.",
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: cs.onSurfaceVariant,
-                  ),
-            ),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 180,
               child: perSession.length < 2
-                  ? const Center(child: Text('—'))
+                  ? const Center(child: Text('Au moins 2 séances nécessaires'))
                   : LineChart(
                       LineChartData(
                         lineBarsData: [
                           LineChartBarData(
                             spots: [
                               for (final p in perSession)
-                                FlSpot(p.index.toDouble(),
-                                    p.heaviestWeightReps.toDouble()),
+                                FlSpot(p.index.toDouble(), p.volume),
                             ],
                             isCurved: true,
                             preventCurveOverShooting: true,
                             barWidth: 3,
-                            color: cs.tertiary,
+                            color: cs.secondary,
+                            belowBarData: BarAreaData(
+                              show: true,
+                              color: cs.secondary.withOpacity(0.12),
+                            ),
                             dotData: FlDotData(
                               show: perSession.length <= 30,
                               getDotPainter: (s, _, __, ___) =>
                                   FlDotCirclePainter(
                                 radius: 3,
-                                color: cs.tertiary,
+                                color: cs.secondary,
                                 strokeWidth: 0,
                               ),
                             ),
@@ -401,15 +357,18 @@ class _ExerciseProgressionView extends ConsumerWidget {
                         titlesData: const FlTitlesData(
                           rightTitles: AxisTitles(),
                           topTitles: AxisTitles(),
-                          leftTitles: AxisTitles(
-                            sideTitles: SideTitles(
-                              showTitles: true,
-                              reservedSize: 28,
-                            ),
-                          ),
                           bottomTitles: AxisTitles(
                             sideTitles: SideTitles(showTitles: false),
                           ),
+                          leftTitles: AxisTitles(
+                            sideTitles: SideTitles(
+                              showTitles: true,
+                              reservedSize: 40,
+                            ),
+                          ),
+                        ),
+                        gridData: const FlGridData(
+                          drawVerticalLine: false,
                         ),
                       ),
                     ),
@@ -434,18 +393,16 @@ class _PrCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return SizedBox(
-      width: 200,
-      child: Container(
-        decoration: BoxDecoration(
-          color: cs.surfaceContainer,
-          borderRadius: BorderRadius.circular(AppTokens.radiusL),
-          border: Border.all(color: cs.outlineVariant),
-        ),
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surfaceContainer,
+        borderRadius: BorderRadius.circular(AppTokens.radiusL),
+        border: Border.all(color: cs.outlineVariant),
+      ),
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
             Row(
               children: [
                 Container(
@@ -499,8 +456,7 @@ class _PrCard extends StatelessWidget {
               ),
           ],
         ),
-      ),
-    );
+      );
   }
 }
 

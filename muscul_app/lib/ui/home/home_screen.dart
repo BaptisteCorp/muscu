@@ -539,10 +539,14 @@ class _SettingsSheet extends ConsumerWidget {
                   _PaletteSwatch(
                     palette: p,
                     selected: s.palette == p,
-                    // Palette is a device-local preference — no cloud push.
-                    onTap: () => ref
-                        .read(settingsRepositoryProvider)
-                        .save(s.copyWith(palette: p)),
+                    // Persist + push so the chosen accent colour survives a
+                    // logout / login and follows the user across devices.
+                    onTap: () async {
+                      await ref
+                          .read(settingsRepositoryProvider)
+                          .save(s.copyWith(palette: p));
+                      ref.read(syncServiceProvider).pushSettings().ignore();
+                    },
                   ),
               ],
             ),

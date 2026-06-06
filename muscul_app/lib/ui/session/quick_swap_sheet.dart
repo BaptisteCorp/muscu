@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/providers.dart';
+import '../../core/widgets/exercise_name_label.dart';
+import '../../domain/models/enums.dart';
 import '../../domain/models/exercise.dart';
 import '../library/exercises/quick_create_exercise_form.dart';
 
@@ -110,7 +112,10 @@ class _QuickSwapSheetState extends ConsumerState<QuickSwapSheet> {
                             controller: controller,
                             itemCount: filtered.length,
                             itemBuilder: (_, i) => ListTile(
-                              title: Text(filtered[i].name),
+                              title: ExerciseNameLabel(
+                                name: filtered[i].name,
+                                equipment: filtered[i].equipment,
+                              ),
                               subtitle: Text(filtered[i].primaryMuscle.name),
                               onTap: () =>
                                   Navigator.pop(context, filtered[i]),
@@ -179,7 +184,7 @@ class _SuggestionCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontWeight: FontWeight.bold)),
                 const Spacer(),
-                Text(exercise.equipment.name,
+                Text(exercise.equipment.label,
                     style: const TextStyle(fontSize: 12)),
               ],
             ),

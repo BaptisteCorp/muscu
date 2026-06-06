@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/providers.dart';
 import '../../../core/utils/formatters.dart';
+import '../../../core/widgets/exercise_name_label.dart';
 import '../../../data/sync/sync_service.dart';
 import '../../../domain/models/enums.dart';
 import '../../../domain/models/exercise.dart';
@@ -128,16 +129,19 @@ class _ExerciseTile extends ConsumerWidget {
     final tile = ListTile(
       leading: _Thumbnail(path: exercise.photoPath),
       title: Row(children: [
-        Expanded(child: Text(exercise.name)),
+        Expanded(
+          child: ExerciseNameLabel(
+            name: exercise.name,
+            equipment: exercise.equipment,
+          ),
+        ),
         if (exercise.isCustom)
           const Padding(
             padding: EdgeInsets.only(left: 6),
             child: Icon(Icons.person, size: 14, color: Colors.amber),
           ),
       ]),
-      subtitle: Text(
-        '${muscleLabel(exercise.primaryMuscle)} • ${exercise.equipment.label}',
-      ),
+      subtitle: Text(muscleLabel(exercise.primaryMuscle)),
       trailing: exercise.isCustom
           ? const Icon(Icons.edit_outlined, size: 18)
           : const Icon(Icons.lock_outline, size: 18),

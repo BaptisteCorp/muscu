@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../../core/providers.dart';
 import '../../../core/utils/formatters.dart';
+import '../../../core/widgets/exercise_name_label.dart';
 import '../../../data/repositories/template_repository.dart';
 import '../../../data/sync/sync_service.dart';
 import '../../../domain/models/enums.dart';
@@ -410,7 +411,9 @@ class _TemplateExerciseTile extends ConsumerWidget {
       child: ListTile(
         onTap: onTap,
         title: exAsync.when(
-          data: (ex) => Text(ex?.name ?? '?'),
+          data: (ex) => ex == null
+              ? const Text('?')
+              : ExerciseNameLabel(name: ex.name, equipment: ex.equipment),
           loading: () => const Text('...'),
           error: (e, _) => Text('Erreur: $e'),
         ),
@@ -557,7 +560,12 @@ class _ExercisePickerSheetState extends ConsumerState<_ExercisePickerSheet> {
                       return ListTile(
                         title: Row(
                           children: [
-                            Expanded(child: Text(ex.name)),
+                            Expanded(
+                              child: ExerciseNameLabel(
+                                name: ex.name,
+                                equipment: ex.equipment,
+                              ),
+                            ),
                             if (isRelevant)
                               const Padding(
                                 padding: EdgeInsets.only(left: 6),

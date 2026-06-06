@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:drift/drift.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -334,6 +335,7 @@ class SyncService {
         userBodyweightKg:
             Value((m['user_bodyweight_kg'] as num?)?.toDouble()),
         themeMode: Value((m['theme_mode'] as String?) ?? 'system'),
+        palette: Value((m['palette'] as String?) ?? 'crimson'),
       ),
     );
     report.pulled('user_settings');
@@ -592,6 +594,7 @@ class SyncService {
     final teRows = await (_db.select(_db.workoutTemplateExercises)
           ..where((t) => t.templateId.equals(templateId)))
         .get();
+    final localTeIds = teRows.map((r) => r.id).toList();
     if (teRows.isNotEmpty) {
       await _sb.from('workout_template_exercises').upsert(
         [
@@ -608,27 +611,91 @@ class SyncService {
         ],
         onConflict: 'user_id,id',
       );
-      final teIds = teRows.map((r) => r.id).toList();
-      final setRows = await (_db.select(_db.templateExerciseSets)
-            ..where((t) => t.templateExerciseId.isIn(teIds)))
-          .get();
-      if (setRows.isNotEmpty) {
-        await _sb.from('template_exercise_sets').upsert(
-          [
-            for (final r in setRows)
-              {
-                'id': r.id,
-                'user_id': uid,
-                'template_exercise_id': r.templateExerciseId,
-                'set_index': r.setIndex,
-                'planned_reps': r.plannedReps,
-                'planned_weight_kg': r.plannedWeightKg,
-              }
-          ],
-          onConflict: 'user_id,id',
-        );
-      }
     }
+    final setRows = localTeIds.isEmpty
+        ? const <TemplateExerciseSetEntity>[]
+        : await (_db.select(_db.templateExerciseSets)
+              ..where((t) => t.templateExerciseId.isIn(localTeIds)))
+            .get();
+    final localSetIds = setRows.map((r) => r.id).toList();
+    if (setRows.isNotEmpty) {
+      await _sb.from('template_exercise_sets').upsert(
+        [
+          for (final r in setRows)
+            {
+              'id': r.id,
+              'user_id': uid,
+              'template_exercise_id': r.templateExerciseId,
+              'set_index': r.setIndex,
+              'planned_reps': r.plannedReps,
+              'planned_weight_kg': r.plannedWeightKg,
+            }
+        ],
+        onConflict: 'user_id,id',
+      );
+    }
+
+    // --- Reconcile cloud deletions ---------------------------------------
+    // Rows removed locally (a deleted exercise, fewer planned sets, the whole
+    // exercise list cleared, ...) must also disappear from the cloud. The
+    // local save uses replace-all semantics (`setTemplateExercises`), but the
+    // cloud upserts above only ever *insert/update* — they never delete. So
+    // without this step the deleted rows linger on the cloud and the next
+    // pull re-inserts them locally via insertOnConflictUpdate: the deleted
+    // exercise "comes back" after the app is closed and reopened.
+    final cloudTeResp = await _sb
+        .from('workout_template_exercises')
+        .select('id')
+        .eq('user_id', uid)
+        .eq('template_id', templateId);
+    final cloudTeIds = [
+      for (final r in cloudTeResp) r['id'] as String,
+    ];
+    final staleTeIds =
+        staleCloudIds(localIds: localTeIds, cloudIds: cloudTeIds);
+    if (staleTeIds.isNotEmpty) {
+      // Sets first so an interrupted call can't orphan them on the cloud.
+      await _sb
+          .from('template_exercise_sets')
+          .delete()
+          .eq('user_id', uid)
+          .inFilter('template_exercise_id', staleTeIds);
+      await _sb
+          .from('workout_template_exercises')
+          .delete()
+          .eq('user_id', uid)
+          .inFilter('id', staleTeIds);
+    }
+    // Also drop sets that were removed from a *kept* exercise (e.g. the user
+    // reduced its planned set count): they belong to a still-present
+    // template_exercise but no longer exist locally.
+    if (localTeIds.isNotEmpty) {
+      var del = _sb
+          .from('template_exercise_sets')
+          .delete()
+          .eq('user_id', uid)
+          .inFilter('template_exercise_id', localTeIds);
+      if (localSetIds.isNotEmpty) {
+        del = del.not('id', 'in', '(${localSetIds.join(',')})');
+      }
+      await del;
+    }
+  }
+
+  /// Cloud row ids that must be deleted: present on the cloud but gone from
+  /// the local DB. Pure set-difference, factored out so the deletion logic
+  /// at the heart of the "deleted template exercise comes back" fix can be
+  /// unit-tested without a live Supabase.
+  @visibleForTesting
+  static List<String> staleCloudIds({
+    required List<String> localIds,
+    required List<String> cloudIds,
+  }) {
+    final keep = localIds.toSet();
+    return [
+      for (final id in cloudIds)
+        if (!keep.contains(id)) id,
+    ];
   }
 
   /// Push a single exercise row to the cloud immediately. Same rationale
@@ -763,16 +830,39 @@ class SyncService {
           ..where((t) => t.id.equals(1)))
         .getSingleOrNull();
     if (row == null) return;
-    await _sb.from('user_settings').upsert({
-      'user_id': uid,
-      'default_increment_kg': row.defaultIncrementKg,
-      'weight_unit': row.weightUnit,
-      'default_rest_seconds': row.defaultRestSeconds,
-      'use_rir_instead_of_rpe': row.useRirInsteadOfRpe,
-      'user_bodyweight_kg': row.userBodyweightKg,
-      'theme_mode': row.themeMode,
-      'updated_at': _isoUtc(DateTime.now()),
-    }, onConflict: 'user_id');
+    await _upsertSettings(_settingsPayload(uid, row));
+  }
+
+  /// Build the user_settings cloud payload from a local row.
+  Map<String, dynamic> _settingsPayload(String uid, UserSettingsRow row) => {
+        'user_id': uid,
+        'default_increment_kg': row.defaultIncrementKg,
+        'weight_unit': row.weightUnit,
+        'default_rest_seconds': row.defaultRestSeconds,
+        'use_rir_instead_of_rpe': row.useRirInsteadOfRpe,
+        'user_bodyweight_kg': row.userBodyweightKg,
+        'theme_mode': row.themeMode,
+        'palette': row.palette,
+        'updated_at': _isoUtc(DateTime.now()),
+      };
+
+  /// Upsert the settings payload, degrading gracefully if the cloud table
+  /// predates the `palette` column. Without this fallback a database that
+  /// hasn't run the latest schema.sql would fail the whole settings push (and,
+  /// inside a full sync, abort the pull too). Drop `palette` and retry so the
+  /// rest of the settings still sync; the colour resumes syncing once the
+  /// column is added.
+  Future<void> _upsertSettings(Map<String, dynamic> payload) async {
+    try {
+      await _sb.from('user_settings').upsert(payload, onConflict: 'user_id');
+    } on PostgrestException catch (e) {
+      final mentionsPalette =
+          e.message.toLowerCase().contains('palette') ||
+              (e.code == 'PGRST204'); // unknown column in the schema cache
+      if (!mentionsPalette || !payload.containsKey('palette')) rethrow;
+      final fallback = Map<String, dynamic>.from(payload)..remove('palette');
+      await _sb.from('user_settings').upsert(fallback, onConflict: 'user_id');
+    }
   }
 
   /// Push (or hard-delete, when [delete] is true) a single bodyweight
@@ -879,16 +969,7 @@ class SyncService {
           ..where((t) => t.id.equals(1)))
         .getSingleOrNull();
     if (row == null) return;
-    await _sb.from('user_settings').upsert({
-      'user_id': uid,
-      'default_increment_kg': row.defaultIncrementKg,
-      'weight_unit': row.weightUnit,
-      'default_rest_seconds': row.defaultRestSeconds,
-      'use_rir_instead_of_rpe': row.useRirInsteadOfRpe,
-      'user_bodyweight_kg': row.userBodyweightKg,
-      'theme_mode': row.themeMode,
-      'updated_at': _isoUtc(DateTime.now()),
-    }, onConflict: 'user_id');
+    await _upsertSettings(_settingsPayload(uid, row));
     report.pushed('user_settings', 1);
   }
 

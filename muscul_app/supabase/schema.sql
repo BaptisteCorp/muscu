@@ -147,9 +147,15 @@ create table if not exists public.user_settings (
   use_rir_instead_of_rpe boolean not null default false,
   user_bodyweight_kg double precision,
   theme_mode text not null default 'system',
+  palette text not null default 'crimson',
   updated_at timestamptz not null default now(),
   primary key (user_id)
 );
+-- Added after the initial release: re-running this file on an existing
+-- project adds the accent-colour column so the chosen palette syncs and
+-- survives a logout / login (and follows the user across devices).
+alter table public.user_settings
+  add column if not exists palette text not null default 'crimson';
 
 -- ---------------------------- bodyweight_entries ---------------------------
 create table if not exists public.bodyweight_entries (
