@@ -20,6 +20,11 @@ class PlanCard extends StatelessWidget {
   final bool hasHistory;
   final String Function(double) formatWeight;
   final String Function(List<TemplateExerciseSet>) formatPlanLine;
+
+  /// 1RM estimé (Epley) pour la cible du jour, ou `null` pour le poids du
+  /// corps / quand il n'y a pas d'estimation sensée. Affiché en discret sous
+  /// la ligne de cible.
+  final double? oneRepMaxKg;
   const PlanCard({
     super.key,
     required this.plan,
@@ -27,6 +32,7 @@ class PlanCard extends StatelessWidget {
     required this.hasHistory,
     required this.formatWeight,
     required this.formatPlanLine,
+    this.oneRepMaxKg,
   });
 
   @override
@@ -74,15 +80,35 @@ class PlanCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 6),
-          Text(
-            body,
-            style: TextStyle(
-              color: cs.onSurface,
-              fontSize: 15.5,
-              height: 1.3,
-              fontWeight: FontWeight.w700,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Flexible(
+                child: Text(
+                  body,
+                  style: TextStyle(
+                    color: cs.onSurface,
+                    fontSize: 15.5,
+                    height: 1.3,
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+              if (oneRepMaxKg != null) ...[
+                const SizedBox(width: 10),
+                Text(
+                  '1RM ~${formatWeight(oneRepMaxKg!)} kg',
+                  style: TextStyle(
+                    color: cs.onSurfaceVariant,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ],
           ),
           if (target.reason.isNotEmpty) ...[
             const SizedBox(height: 4),

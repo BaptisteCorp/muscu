@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 import '../../core/providers.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
+import '../../core/utils/one_rep_max.dart';
 import '../../data/repositories/session_repository.dart';
 import '../../data/sync/sync_service.dart';
 import '../../domain/models/enums.dart';
@@ -588,6 +589,11 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
           hasHistory: hasHistory,
           formatWeight: fmtKg,
           formatPlanLine: _planLine,
+          // Pas de 1RM pour le poids du corps : la charge additionnelle seule
+          // ne donne pas une estimation parlante.
+          oneRepMaxKg: exercise.useBodyweight
+              ? null
+              : estimateOneRepMax(target.targetWeightKg, target.targetReps),
         ),
         const SizedBox(height: 10),
         Wrap(

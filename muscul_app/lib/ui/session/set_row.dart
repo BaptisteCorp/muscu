@@ -229,7 +229,9 @@ class SetRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // No header here — the progress dot strip above the card already
-          // shows which set is in progress.
+          // shows which set is in progress. Reps and weight are the two values
+          // that always matter, so they get the full width as big steppers;
+          // RPE/RIR is optional and lives in a discreet chip below.
           Row(
             children: [
               Expanded(
@@ -247,18 +249,14 @@ class SetRow extends StatelessWidget {
                   onTap: () => _editWeightManually(context),
                 ),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _BigStepper(
-                  label: useRir ? 'RIR' : 'RPE',
-                  value: rpe == null
-                      ? '—'
-                      : (useRir ? (10 - rpe!).toString() : rpe!.toString()),
-                  onTap: () => _editRpeManually(context),
-                  onInfo: () => _showRpeInfo(context, useRir),
-                ),
-              ),
             ],
+          ),
+          const SizedBox(height: 10),
+          _RpeChip(
+            useRir: useRir,
+            rpe: rpe,
+            onTap: () => _editRpeManually(context),
+            onInfo: () => _showRpeInfo(context, useRir),
           ),
           const SizedBox(height: 10),
           Row(
@@ -529,7 +527,6 @@ class _Dot extends StatelessWidget {
 class _BigStepper extends StatelessWidget {
   final String label;
   final String value;
-  final VoidCallback? onInfo;
 
   /// Ouvre le picker (tap sur la valeur ou sur le bouton molette).
   final VoidCallback onTap;
@@ -537,7 +534,6 @@ class _BigStepper extends StatelessWidget {
     required this.label,
     required this.value,
     required this.onTap,
-    this.onInfo,
   });
 
   @override
@@ -553,31 +549,14 @@ class _BigStepper extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                label.toUpperCase(),
-                style: TextStyle(
-                  color: cs.onSurfaceVariant,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1.0,
-                ),
-              ),
-              if (onInfo != null) ...[
-                const SizedBox(width: 3),
-                GestureDetector(
-                  onTap: onInfo,
-                  child: Icon(
-                    Icons.info_outline,
-                    size: 12,
-                    color: cs.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ],
+          Text(
+            label.toUpperCase(),
+            style: TextStyle(
+              color: cs.onSurfaceVariant,
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1.0,
+            ),
           ),
           const SizedBox(height: 2),
           // Hero value — fixed height so all 3 columns line up.
@@ -636,6 +615,86 @@ class _StepperButton extends StatelessWidget {
         ),
         child: Icon(icon, size: 20, color: cs.onSurface),
       ),
+    );
+  }
+}
+
+/// Discreet, optional RPE/RIR control for the active set. Sits below the
+/// reps/weight steppers so it never competes with the two values that always
+/// matter. Muted "add" affordance when unset; a filled accent pill once a
+/// value is chosen (tap to change). The info icon explains the scale.
+class _RpeChip extends StatelessWidget {
+  final bool useRir;
+  final int? rpe;
+  final VoidCallback onTap;
+  final VoidCallback onInfo;
+  const _RpeChip({
+    required this.useRir,
+    required this.rpe,
+    required this.onTap,
+    required this.onInfo,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final label = useRir ? 'RIR' : 'RPE';
+    final hasValue = rpe != null;
+    final display =
+        hasValue ? (useRir ? (10 - rpe!).toString() : rpe!.toString()) : null;
+
+    final Color bg = hasValue
+        ? cs.primary.withOpacity(0.12)
+        : Colors.transparent;
+    final Color fg = hasValue ? cs.primary : cs.onSurfaceVariant;
+    final Border border = Border.all(
+      color: hasValue ? cs.primary.withOpacity(0.5) : cs.outline,
+    );
+
+    return Row(
+      children: [
+        InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(AppTokens.radiusS),
+          child: Container(
+            height: 34,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: bg,
+              border: border,
+              borderRadius: BorderRadius.circular(AppTokens.radiusS),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  hasValue ? Icons.bolt_rounded : Icons.add_rounded,
+                  size: 16,
+                  color: fg,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  hasValue ? '$label $display' : '$label (option)',
+                  style: TextStyle(
+                    color: fg,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        IconButton(
+          onPressed: onInfo,
+          icon: const Icon(Icons.info_outline, size: 18),
+          color: cs.onSurfaceVariant,
+          visualDensity: VisualDensity.compact,
+          tooltip: useRir ? 'Qu\'est-ce que le RIR ?' : 'Qu\'est-ce que le RPE ?',
+        ),
+      ],
     );
   }
 }

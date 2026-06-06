@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/providers.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/formatters.dart';
+import '../../../core/utils/one_rep_max.dart';
 import '../../../core/widgets/exercise_name_label.dart';
 import '../../../domain/models/exercise.dart';
 import '../../../domain/models/session.dart';
@@ -240,137 +241,81 @@ class _ExerciseProgressionView extends ConsumerWidget {
             Text('Records perso',
                 style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
-            // Two cards filling the width — everything visible at a glance,
-            // no horizontal scroll.
-            SizedBox(
-              height: 108,
-              child: Row(
+            // One card, one row per record: the label gets the full width so
+            // nothing truncates ("Meilleur poids", "1RM estimé"…). The 1RM row
+            // only shows for loaded exercises (bodyweight-only sets give no
+            // sensible estimate).
+            Container(
+              decoration: BoxDecoration(
+                color: cs.surfaceContainer,
+                borderRadius: BorderRadius.circular(AppTokens.radiusL),
+                border: Border.all(color: cs.outlineVariant),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Column(
                 children: [
-                  Expanded(
-                    child: _PrCard(
-                      label: 'Meilleur poids',
-                      value: '${fmtKg(prs.bestWeight)} kg',
-                      sub: prs.bestWeightReps > 0
-                          ? '× ${prs.bestWeightReps} reps'
-                              '${prs.bestWeightDate == null ? '' : ' • ${fmtDate(prs.bestWeightDate!)}'}'
-                          : null,
-                    ),
+                  _PrRow(
+                    icon: Icons.fitness_center_rounded,
+                    accent: cs.primary,
+                    label: 'Meilleur poids',
+                    value: '${fmtKg(prs.bestWeight)} kg',
+                    sub: prs.bestWeightReps > 0
+                        ? '× ${prs.bestWeightReps} reps'
+                            '${prs.bestWeightDate == null ? '' : ' • ${fmtDate(prs.bestWeightDate!)}'}'
+                        : null,
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _PrCard(
-                      label: 'Volume max',
-                      value: '${prs.volume.toStringAsFixed(0)} kg',
-                      sub: prs.volumeDate == null
-                          ? null
-                          : 'le ${fmtDate(prs.volumeDate!)}',
+                  if (prs.bestOneRepMax > 0) ...[
+                    Divider(height: 1, color: cs.outlineVariant),
+                    _PrRow(
+                      icon: Icons.bolt_rounded,
+                      accent: cs.tertiary,
+                      label: '1RM estimé',
+                      value: '${fmtKg(prs.bestOneRepMax)} kg',
+                      sub: '${prs.bestOneRepMaxReps} × '
+                          '${fmtKg(prs.bestOneRepMaxWeight)} kg',
                     ),
+                  ],
+                  Divider(height: 1, color: cs.outlineVariant),
+                  _PrRow(
+                    icon: Icons.bar_chart_rounded,
+                    accent: cs.secondary,
+                    label: 'Volume max',
+                    value: '${prs.volume.toStringAsFixed(0)} kg',
+                    sub: prs.volumeDate == null
+                        ? null
+                        : 'le ${fmtDate(prs.volumeDate!)}',
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 24),
-            Text('Force : poids le plus lourd par séance',
-                style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 220,
+            _ChartSection(
+              title: 'Force — poids le plus lourd',
+              ready: perSession.length >= 2,
               child: perSession.length < 2
-                  ? const Center(child: Text('Au moins 2 séances nécessaires'))
-                  : LineChart(
-                      LineChartData(
-                        lineBarsData: [
-                          LineChartBarData(
-                            spots: [
-                              for (final p in perSession)
-                                FlSpot(p.index.toDouble(), p.heaviestWeight),
-                            ],
-                            isCurved: true,
-                            preventCurveOverShooting: true,
-                            barWidth: 3,
-                            color: cs.primary,
-                            dotData: FlDotData(
-                              show: perSession.length <= 30,
-                              getDotPainter: (s, _, __, ___) =>
-                                  FlDotCirclePainter(
-                                radius: 3,
-                                color: cs.primary,
-                                strokeWidth: 0,
-                              ),
-                            ),
-                          ),
-                        ],
-                        titlesData: const FlTitlesData(
-                          rightTitles: AxisTitles(),
-                          topTitles: AxisTitles(),
-                          bottomTitles: AxisTitles(
-                            sideTitles: SideTitles(showTitles: false),
-                          ),
-                          leftTitles: AxisTitles(
-                            sideTitles: SideTitles(
-                              showTitles: true,
-                              reservedSize: 36,
-                            ),
-                          ),
-                        ),
-                        gridData: const FlGridData(
-                          drawVerticalLine: false,
-                        ),
-                      ),
+                  ? null
+                  : _TrendChart(
+                      values: [for (final p in perSession) p.heaviestWeight],
+                      color: cs.primary,
+                      axisFormatter: fmtKg,
+                      tooltipFormatter: (v) => '${fmtKg(v)} kg',
+                      startLabel: fmtDate(perSession.first.date),
+                      endLabel: fmtDate(perSession.last.date),
                     ),
             ),
             const SizedBox(height: 24),
-            Text('Volume par séance',
-                style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 200,
+            _ChartSection(
+              title: 'Volume par séance',
+              ready: perSession.length >= 2,
               child: perSession.length < 2
-                  ? const Center(child: Text('Au moins 2 séances nécessaires'))
-                  : LineChart(
-                      LineChartData(
-                        lineBarsData: [
-                          LineChartBarData(
-                            spots: [
-                              for (final p in perSession)
-                                FlSpot(p.index.toDouble(), p.volume),
-                            ],
-                            isCurved: true,
-                            preventCurveOverShooting: true,
-                            barWidth: 3,
-                            color: cs.secondary,
-                            belowBarData: BarAreaData(
-                              show: true,
-                              color: cs.secondary.withOpacity(0.12),
-                            ),
-                            dotData: FlDotData(
-                              show: perSession.length <= 30,
-                              getDotPainter: (s, _, __, ___) =>
-                                  FlDotCirclePainter(
-                                radius: 3,
-                                color: cs.secondary,
-                                strokeWidth: 0,
-                              ),
-                            ),
-                          ),
-                        ],
-                        titlesData: const FlTitlesData(
-                          rightTitles: AxisTitles(),
-                          topTitles: AxisTitles(),
-                          bottomTitles: AxisTitles(
-                            sideTitles: SideTitles(showTitles: false),
-                          ),
-                          leftTitles: AxisTitles(
-                            sideTitles: SideTitles(
-                              showTitles: true,
-                              reservedSize: 40,
-                            ),
-                          ),
-                        ),
-                        gridData: const FlGridData(
-                          drawVerticalLine: false,
-                        ),
-                      ),
+                  ? null
+                  : _TrendChart(
+                      values: [for (final p in perSession) p.volume],
+                      color: cs.secondary,
+                      axisFormatter: _compactNumber,
+                      tooltipFormatter: (v) => '${v.toStringAsFixed(0)} kg',
+                      startLabel: fmtDate(perSession.first.date),
+                      endLabel: fmtDate(perSession.last.date),
                     ),
             ),
             const SizedBox(height: 24),
@@ -384,80 +329,310 @@ class _ExerciseProgressionView extends ConsumerWidget {
   }
 }
 
-class _PrCard extends StatelessWidget {
+/// One personal-record line: a coloured icon, the full label + an optional
+/// detail line on the left, and the big value on the right. Stacked in a
+/// single card so labels never have to compete for horizontal space.
+class _PrRow extends StatelessWidget {
+  final IconData icon;
+  final Color accent;
   final String label;
   final String value;
   final String? sub;
-  const _PrCard({required this.label, required this.value, this.sub});
+  const _PrRow({
+    required this.icon,
+    required this.accent,
+    required this.label,
+    required this.value,
+    this.sub,
+  });
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: accent.withOpacity(0.14),
+              borderRadius: BorderRadius.circular(AppTokens.radiusM),
+            ),
+            child: Icon(icon, size: 20, color: accent),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (sub != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 1),
+                    child: Text(
+                      sub!,
+                      style: TextStyle(
+                        color: cs.onSurfaceVariant,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            value,
+            style: TextStyle(
+              color: cs.onSurface,
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+              fontFeatures: const [FontFeature.tabularFigures()],
+              letterSpacing: -0.3,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Section title + framed chart card (or a placeholder when there isn't
+/// enough data yet). Keeps the two trend charts visually consistent.
+class _ChartSection extends StatelessWidget {
+  final String title;
+  final bool ready;
+  final Widget? child;
+  const _ChartSection({
+    required this.title,
+    required this.ready,
+    this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        if (ready && child != null)
+          child!
+        else
+          Container(
+            height: 120,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: cs.surfaceContainer,
+              borderRadius: BorderRadius.circular(AppTokens.radiusL),
+              border: Border.all(color: cs.outlineVariant),
+            ),
+            child: Text(
+              'Au moins 2 séances nécessaires',
+              style: TextStyle(color: cs.onSurfaceVariant),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Polished area + line chart used for the per-session trends. Framed in a
+/// card, smooth curve with a fading gradient fill, muted left-axis labels,
+/// a touch tooltip, and the date range under the plot for legibility.
+class _TrendChart extends StatelessWidget {
+  final List<double> values;
+  final Color color;
+
+  /// Formats the left-axis ticks (compact).
+  final String Function(double) axisFormatter;
+
+  /// Formats the value shown in the touch tooltip (full + unit).
+  final String Function(double) tooltipFormatter;
+  final String? startLabel;
+  final String? endLabel;
+  const _TrendChart({
+    required this.values,
+    required this.color,
+    required this.axisFormatter,
+    required this.tooltipFormatter,
+    this.startLabel,
+    this.endLabel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final maxV = values.reduce((a, b) => a > b ? a : b);
+    final minV = values.reduce((a, b) => a < b ? a : b);
+    final range = (maxV - minV).abs();
+    final pad = range < 1e-9
+        ? (maxV.abs() < 1e-9 ? 1.0 : maxV.abs() * 0.1)
+        : range * 0.18;
+    // Don't dip below zero when every value is positive (weights, volume).
+    final minY = (minV >= 0) ? (minV - pad).clamp(0.0, minV) : minV - pad;
+    final maxY = maxV + pad;
+    final interval = ((maxY - minY) / 4).clamp(1.0, double.infinity);
+    final spots = [
+      for (var i = 0; i < values.length; i++)
+        FlSpot(i.toDouble(), values[i]),
+    ];
+
     return Container(
       decoration: BoxDecoration(
         color: cs.surfaceContainer,
         borderRadius: BorderRadius.circular(AppTokens.radiusL),
         border: Border.all(color: cs.outlineVariant),
       ),
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.fromLTRB(6, 16, 14, 10),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-            Row(
-              children: [
-                Container(
-                  width: 4,
-                  height: 12,
-                  decoration: BoxDecoration(
-                    color: cs.primary,
-                    borderRadius: BorderRadius.circular(2),
+          SizedBox(
+            height: 180,
+            child: LineChart(
+              LineChartData(
+                minX: 0,
+                maxX: (values.length - 1).toDouble(),
+                minY: minY,
+                maxY: maxY,
+                lineTouchData: LineTouchData(
+                  touchTooltipData: LineTouchTooltipData(
+                    getTooltipColor: (_) => cs.inverseSurface,
+                    getTooltipItems: (touched) => [
+                      for (final t in touched)
+                        LineTooltipItem(
+                          tooltipFormatter(t.y),
+                          TextStyle(
+                            color: cs.onInverseSurface,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 13,
+                          ),
+                        ),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    label.toUpperCase(),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: cs.onSurfaceVariant,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1.2,
+                lineBarsData: [
+                  LineChartBarData(
+                    spots: spots,
+                    isCurved: true,
+                    preventCurveOverShooting: true,
+                    barWidth: 3,
+                    color: color,
+                    dotData: FlDotData(
+                      show: values.length <= 12,
+                      getDotPainter: (s, _, __, ___) => FlDotCirclePainter(
+                        radius: 3.5,
+                        color: color,
+                        strokeWidth: 2,
+                        strokeColor: cs.surfaceContainer,
+                      ),
+                    ),
+                    belowBarData: BarAreaData(
+                      show: true,
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          color.withOpacity(0.28),
+                          color.withOpacity(0.0),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+                titlesData: FlTitlesData(
+                  rightTitles: const AxisTitles(),
+                  topTitles: const AxisTitles(),
+                  bottomTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  leftTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 42,
+                      interval: interval,
+                      getTitlesWidget: (v, meta) {
+                        if (v <= meta.min || v >= meta.max) {
+                          return const SizedBox.shrink();
+                        }
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: Text(
+                            axisFormatter(v),
+                            style: TextStyle(
+                              color: cs.onSurfaceVariant,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ),
                 ),
-              ],
-            ),
-            const Spacer(),
-            Text(
-              value,
-              style: TextStyle(
-                color: cs.onSurface,
-                fontSize: 22,
-                fontWeight: FontWeight.w900,
-                fontFeatures: const [FontFeature.tabularFigures()],
-                letterSpacing: -0.3,
-              ),
-            ),
-            if (sub != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Text(
-                  sub!,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: cs.onSurfaceVariant,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
+                gridData: FlGridData(
+                  drawVerticalLine: false,
+                  horizontalInterval: interval,
+                  getDrawingHorizontalLine: (_) => FlLine(
+                    color: cs.outlineVariant.withOpacity(0.5),
+                    strokeWidth: 1,
                   ),
                 ),
+                borderData: FlBorderData(show: false),
               ),
+            ),
+          ),
+          if (startLabel != null && endLabel != null) ...[
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.only(left: 36),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    startLabel!,
+                    style: TextStyle(
+                      color: cs.onSurfaceVariant,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  Text(
+                    endLabel!,
+                    style: TextStyle(
+                      color: cs.onSurfaceVariant,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
-        ),
-      );
+        ],
+      ),
+    );
   }
+}
+
+/// Compact number for chart axes: 1 234 → "1.2k", 950 → "950".
+String _compactNumber(double v) {
+  if (v.abs() >= 1000) {
+    final k = v / 1000;
+    return '${k.toStringAsFixed(k == k.truncateToDouble() ? 0 : 1)}k';
+  }
+  return v.toStringAsFixed(0);
 }
 
 class _ExoSessionStats {
@@ -512,6 +687,12 @@ class _Pr {
   final int bestRepsCount;
   final double bestRepsWeight;
   final DateTime? bestRepsDate;
+  // Meilleur 1RM estimé (Epley) sur toutes les séries de travail, + la série
+  // qui l'a produit.
+  final double bestOneRepMax;
+  final int bestOneRepMaxReps;
+  final double bestOneRepMaxWeight;
+  final DateTime? bestOneRepMaxDate;
   _Pr({
     required this.volume,
     required this.volumeDate,
@@ -521,6 +702,10 @@ class _Pr {
     required this.bestRepsCount,
     required this.bestRepsWeight,
     required this.bestRepsDate,
+    required this.bestOneRepMax,
+    required this.bestOneRepMaxReps,
+    required this.bestOneRepMaxWeight,
+    required this.bestOneRepMaxDate,
   });
 }
 
@@ -533,6 +718,10 @@ _Pr _detailedPRs(List<SessionExerciseWithSets> history) {
   int bestReps = 0;
   double bestRepsW = 0;
   DateTime? bestRepsDate;
+  double bestOrm = 0;
+  int bestOrmReps = 0;
+  double bestOrmW = 0;
+  DateTime? bestOrmDate;
   for (final s in history) {
     final working = s.sets.where((set) => !set.isWarmup).toList();
     if (working.isEmpty) continue;
@@ -554,6 +743,13 @@ _Pr _detailedPRs(List<SessionExerciseWithSets> history) {
         bestRepsW = set.weightKg;
         bestRepsDate = set.completedAt;
       }
+      final orm = estimateOneRepMax(set.weightKg, set.reps);
+      if (orm != null && orm > bestOrm) {
+        bestOrm = orm;
+        bestOrmReps = set.reps;
+        bestOrmW = set.weightKg;
+        bestOrmDate = set.completedAt;
+      }
     }
   }
   return _Pr(
@@ -565,5 +761,9 @@ _Pr _detailedPRs(List<SessionExerciseWithSets> history) {
     bestRepsCount: bestReps,
     bestRepsWeight: bestRepsW,
     bestRepsDate: bestRepsDate,
+    bestOneRepMax: bestOrm,
+    bestOneRepMaxReps: bestOrmReps,
+    bestOneRepMaxWeight: bestOrmW,
+    bestOneRepMaxDate: bestOrmDate,
   );
 }
