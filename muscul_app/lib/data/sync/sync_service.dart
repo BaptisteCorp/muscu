@@ -1114,3 +1114,10 @@ final canSyncProvider = Provider<bool>((ref) {
 /// failures (otherwise auto-sync errors are completely invisible to the
 /// user and silent data loss is impossible to diagnose).
 final lastSyncReportProvider = StateProvider<SyncReport?>((ref) => null);
+
+/// True while the post-login full sync is running. Drives a full-screen
+/// "Synchronisation…" overlay so a fresh login / reinstall shows a single
+/// loading screen instead of content (and the theme) popping in table by
+/// table as each pull lands. Only set for the `login`-triggered sync — a
+/// returning user's app-start / resume sync stays in the background.
+final initialSyncInProgressProvider = StateProvider<bool>((ref) => false);

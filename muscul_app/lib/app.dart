@@ -55,6 +55,13 @@ class _MusculAppState extends ConsumerState<MusculApp>
     final svc = ref.read(syncServiceProvider);
     if (!svc.isAvailable) return;
     _syncInFlight = true;
+    // Only the post-login sync gets the blocking overlay: that's the fresh
+    // login / reinstall case where local is empty and content would
+    // otherwise pop in table-by-table. Resume / app-start syncs stay silent.
+    final blocking = reason == 'login';
+    if (blocking) {
+      ref.read(initialSyncInProgressProvider.notifier).state = true;
+    }
     try {
       var report = await svc.sync();
       // App resumes often fire before the radio is fully back up, so the
@@ -93,6 +100,9 @@ class _MusculAppState extends ConsumerState<MusculApp>
       );
     } finally {
       _syncInFlight = false;
+      if (blocking) {
+        ref.read(initialSyncInProgressProvider.notifier).state = false;
+      }
     }
   }
 
@@ -147,6 +157,8 @@ class _MusculAppState extends ConsumerState<MusculApp>
       _lastUserId = null;
     }
 
+    final initialSyncing = ref.watch(initialSyncInProgressProvider);
+
     return MaterialApp.router(
       title: 'Reps',
       theme: AppTheme.light(palette),
@@ -154,6 +166,84 @@ class _MusculAppState extends ConsumerState<MusculApp>
       themeMode: mode,
       routerConfig: router,
       debugShowCheckedModeBanner: false,
+      // Overlay the whole app with a single loading screen while the
+      // post-login sync runs, so a fresh login / reinstall doesn't show the
+      // theme and data popping in table-by-table as each pull lands.
+      builder: (context, child) {
+        return Stack(
+          children: [
+            child ?? const SizedBox.shrink(),
+            if (initialSyncing) const _InitialSyncOverlay(),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Full-screen, opaque loading overlay shown during the post-login sync.
+/// Includes a "Continuer" escape hatch after a few seconds so a slow or
+/// wedged network never traps the user behind the spinner.
+class _InitialSyncOverlay extends ConsumerStatefulWidget {
+  const _InitialSyncOverlay();
+
+  @override
+  ConsumerState<_InitialSyncOverlay> createState() =>
+      _InitialSyncOverlayState();
+}
+
+class _InitialSyncOverlayState extends ConsumerState<_InitialSyncOverlay> {
+  bool _showSkip = false;
+  Timer? _skipTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _skipTimer = Timer(const Duration(seconds: 8), () {
+      if (mounted) setState(() => _showSkip = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _skipTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+    return Material(
+      color: cs.surface,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 24),
+            Text('Synchronisation de tes données…', style: tt.titleMedium),
+            const SizedBox(height: 6),
+            Text(
+              'Récupération depuis le cloud',
+              style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+            ),
+            const SizedBox(height: 28),
+            AnimatedOpacity(
+              opacity: _showSkip ? 1 : 0,
+              duration: const Duration(milliseconds: 300),
+              child: TextButton(
+                onPressed: _showSkip
+                    ? () => ref
+                        .read(initialSyncInProgressProvider.notifier)
+                        .state = false
+                    : null,
+                child: const Text('Continuer'),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
