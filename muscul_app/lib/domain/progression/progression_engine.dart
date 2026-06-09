@@ -49,6 +49,18 @@ class ProgressionEngine {
     final repMin = exercise.targetRepRangeMin;
     final repMax = exercise.targetRepRangeMax;
 
+    // Poids du corps : on ne prescrit JAMAIS de charge — la surcharge passe
+    // uniquement par les reps. Toute la machinerie poids (mode, ratchet,
+    // deload) est court-circuitée et le poids cible reste à 0.
+    if (exercise.useBodyweight) {
+      return _bodyweightTarget(
+        exercise: exercise,
+        plannedSets: plannedSets,
+        history: history,
+        repMin: repMin,
+      );
+    }
+
     // Anchor for the next target: the most recent session whose mode weight
     // matches the highest weight seen across recent history. This makes
     // progression "ratchet up only" — a single under-load day (e.g. user
@@ -167,6 +179,112 @@ class ProgressionEngine {
           reason: '$ratchetNote+${fmtKg(increment)}kg',
         );
     }
+  }
+
+  /// Cible "poids du corps" : surcharge par les reps uniquement, poids = 0.
+  ///
+  /// On ignore totalement le poids logué (donnée potentiellement sale, ex.
+  /// 20kg par défaut) et on progresse sur la pire série de la dernière séance :
+  ///   - pas d'historique → fourchette basse ;
+  ///   - surcharge désactivée → on rejoue les reps ;
+  ///   - séance validée (séries complètes, reps ≥ min, pas d'effondrement,
+  ///     RPE ok) → +1 rep (non plafonné : pas de charge à ajouter) ;
+  ///   - sinon → on tient les reps.
+  static ProgressionTarget _bodyweightTarget({
+    required Exercise exercise,
+    required int plannedSets,
+    required List<SessionExerciseWithSets> history,
+    required int repMin,
+  }) {
+    final last = _mostRecentWithWork(history);
+    if (last == null) {
+      return ProgressionTarget(
+        targetSets: plannedSets,
+        targetReps: repMin,
+        targetWeightKg: 0,
+        reason: 'Première séance',
+      );
+    }
+    final working =
+        last.sets.where((s) => !s.isWarmup).toList(growable: false);
+    final worstReps =
+        working.map((s) => s.reps).reduce((a, b) => a < b ? a : b);
+    final heldReps = worstReps < repMin ? repMin : worstReps;
+
+    if (!exercise.progressiveOverloadEnabled) {
+      return ProgressionTarget(
+        targetSets: plannedSets,
+        targetReps: heldReps,
+        targetWeightKg: 0,
+        reason: 'Surcharge progressive désactivée',
+      );
+    }
+
+    // Validation reps-only, avec des messages centrés reps (pas de kg).
+    final holdReason = _bodyweightHoldReason(
+      working: working,
+      plannedSets: plannedSets,
+      repMin: repMin,
+      worstReps: worstReps,
+      rpeThreshold: exercise.minimumRpeThreshold,
+    );
+    if (holdReason != null) {
+      return ProgressionTarget(
+        targetSets: plannedSets,
+        targetReps: heldReps,
+        targetWeightKg: 0,
+        reason: holdReason,
+      );
+    }
+    return ProgressionTarget(
+      targetSets: plannedSets,
+      targetReps: worstReps + 1,
+      targetWeightKg: 0,
+      reason: '+1 rep',
+    );
+  }
+
+  /// Raison de tenir les reps sur un exercice au poids du corps, ou null si la
+  /// séance valide la progression. Même logique que [_validate] mais formulée
+  /// en reps (jamais en kg).
+  static String? _bodyweightHoldReason({
+    required List<SetEntry> working,
+    required int plannedSets,
+    required int repMin,
+    required int worstReps,
+    required int? rpeThreshold,
+  }) {
+    if (working.length < plannedSets) {
+      return 'Séries de travail incomplètes — on garde le même objectif de reps';
+    }
+    if (worstReps < repMin) {
+      return 'Vise $repMin reps sur chaque série avant d\'en ajouter';
+    }
+    final bestReps = working.map((s) => s.reps).reduce((a, b) => a > b ? a : b);
+    if (bestReps > 0 &&
+        (bestReps - worstReps) / bestReps >= _maxIntraSessionDropOff) {
+      return 'Grosse chute de reps ($bestReps→$worstReps) — signe de fatigue, '
+          'on consolide avant d\'ajouter des reps';
+    }
+    if (rpeThreshold != null) {
+      final rated = working.where((s) => s.rpe != null).toList();
+      if (rated.isNotEmpty) {
+        final maxRpe = rated.map((s) => s.rpe!).reduce((a, b) => a > b ? a : b);
+        if (maxRpe > rpeThreshold) {
+          return 'RPE trop haut — on garde le même objectif de reps';
+        }
+      }
+    }
+    return null;
+  }
+
+  /// Séance la plus récente ayant au moins une série de travail (hors warm-up).
+  static SessionExerciseWithSets? _mostRecentWithWork(
+      List<SessionExerciseWithSets> history) {
+    for (final s in history) {
+      if (s.sets.any((set) => !set.isWarmup)) return s;
+    }
+    return null;
   }
 
   /// Mode weight of the most recent session that has working sets, or null

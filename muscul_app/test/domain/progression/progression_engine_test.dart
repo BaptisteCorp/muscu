@@ -15,6 +15,7 @@ Exercise _exercise({
   int max = 10,
   double startingWeight = 44,
   double? overrideIncrement = 2.0,
+  bool useBodyweight = false,
 }) {
   return Exercise(
     id: 'ex-1',
@@ -31,6 +32,7 @@ Exercise _exercise({
     targetRepRangeMax: max,
     startingWeightKg: startingWeight,
     defaultIncrementKg: overrideIncrement,
+    useBodyweight: useBodyweight,
     updatedAt: DateTime(2026, 1, 1),
   );
 }
@@ -665,6 +667,105 @@ void main() {
       // Ancre = 120 (le plus lourd), mais la séance la plus récente est à
       // 117.5 → la série d'échecs au poids d'ancrage s'arrête à 0.
       expect(t.reason, isNot(contains('deload')));
+    });
+  });
+
+  group('Poids du corps (reps only, jamais de charge)', () {
+    test('startingWeight 20kg ignoré → première séance à 0kg', () {
+      final ex = _exercise(useBodyweight: true, startingWeight: 20, min: 8, max: 12);
+      final t = ProgressionEngine.computeNextTarget(
+        exercise: ex,
+        plannedSets: 3,
+        history: const [],
+        settings: _settings,
+      );
+      expect(t.targetWeightKg, 0, reason: 'jamais de poids prescrit');
+      expect(t.targetReps, 8);
+    });
+
+    test('séance validée → +1 rep, poids reste 0 (même mode weightFirst)', () {
+      final ex = _exercise(
+        useBodyweight: true,
+        priority: ProgressionPriority.weightFirst,
+        startingWeight: 20,
+        min: 8,
+        max: 12,
+      );
+      final history = [
+        _session([
+          _set(idx: 0, reps: 10, weight: 0),
+          _set(idx: 1, reps: 10, weight: 0),
+          _set(idx: 2, reps: 10, weight: 0),
+        ]),
+      ];
+      final t = ProgressionEngine.computeNextTarget(
+        exercise: ex,
+        plannedSets: 3,
+        history: history,
+        settings: _settings,
+      );
+      expect(t.targetWeightKg, 0, reason: 'weightFirst ne doit PAS ajouter de poids');
+      expect(t.targetReps, 11, reason: '+1 rep');
+    });
+
+    test('reps au-dessus de repMax → continue à grimper (non plafonné)', () {
+      final ex = _exercise(useBodyweight: true, min: 8, max: 12);
+      final history = [
+        _session([
+          _set(idx: 0, reps: 12, weight: 0),
+          _set(idx: 1, reps: 12, weight: 0),
+          _set(idx: 2, reps: 12, weight: 0),
+        ]),
+      ];
+      final t = ProgressionEngine.computeNextTarget(
+        exercise: ex,
+        plannedSets: 3,
+        history: history,
+        settings: _settings,
+      );
+      expect(t.targetWeightKg, 0);
+      expect(t.targetReps, 13, reason: 'pas de charge à ajouter → on monte les reps');
+    });
+
+    test('reps sous le min → on tient, message sans kg', () {
+      final ex = _exercise(useBodyweight: true, min: 8, max: 12);
+      final history = [
+        _session([
+          _set(idx: 0, reps: 8, weight: 0),
+          _set(idx: 1, reps: 6, weight: 0),
+          _set(idx: 2, reps: 8, weight: 0),
+        ]),
+      ];
+      final t = ProgressionEngine.computeNextTarget(
+        exercise: ex,
+        plannedSets: 3,
+        history: history,
+        settings: _settings,
+      );
+      expect(t.targetWeightKg, 0);
+      expect(t.targetReps, 8, reason: 'on re-vise le min');
+      expect(t.reason, isNot(contains('kg')));
+      expect(t.reason, contains('reps'));
+    });
+
+    test('poids logué sale (20kg) ignoré → progression reps quand même', () {
+      // Donnée sale : l'utilisateur a logué 20kg par erreur sur du bodyweight.
+      final ex = _exercise(useBodyweight: true, min: 8, max: 12);
+      final history = [
+        _session([
+          _set(idx: 0, reps: 10, weight: 20),
+          _set(idx: 1, reps: 10, weight: 20),
+          _set(idx: 2, reps: 10, weight: 20),
+        ]),
+      ];
+      final t = ProgressionEngine.computeNextTarget(
+        exercise: ex,
+        plannedSets: 3,
+        history: history,
+        settings: _settings,
+      );
+      expect(t.targetWeightKg, 0, reason: 'on ignore le poids logué');
+      expect(t.targetReps, 11);
     });
   });
 

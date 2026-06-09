@@ -204,7 +204,10 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
     final id = _initial?.id ?? _uuid.v4();
     final repMin = int.tryParse(_repMinCtrl.text) ?? 8;
     final repMax = int.tryParse(_repMaxCtrl.text) ?? 12;
-    final startWeight = double.tryParse(_startingWeightCtrl.text) ?? 20;
+    // Au poids du corps : aucune charge prescrite, on force 0 (le champ est
+    // grisé et pourrait encore contenir une vieille valeur, ex. 20).
+    final startWeight =
+        _useBodyweight ? 0.0 : (double.tryParse(_startingWeightCtrl.text) ?? 20);
     final inc = double.tryParse(_incrementCtrl.text);
     final restRaw = _restCtrl.text.trim();
     final rest = restRaw.isEmpty ? null : int.tryParse(restRaw);
@@ -447,7 +450,12 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
                   ? null
                   : (v) {
                       _markDirty();
-                      setState(() => _useBodyweight = v);
+                      setState(() {
+                        _useBodyweight = v;
+                        // Au poids du corps : pas de charge prescrite, on remet
+                        // le champ (grisé) à 0 pour refléter la donnée réelle.
+                        if (v) _startingWeightCtrl.text = '0';
+                      });
                     },
               title: Row(children: [
                 const Text('Au poids du corps'),
