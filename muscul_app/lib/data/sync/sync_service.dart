@@ -321,23 +321,35 @@ class SyncService {
         .limit(1);
     if ((rows as List).isEmpty) return;
     final m = rows.first as Map<String, dynamic>;
-    await (_db.update(_db.userSettingsTable)
+    final cloudUpdated =
+        DateTime.parse(m['updated_at'] as String).toLocal();
+    final local = await (_db.select(_db.userSettingsTable)
           ..where((t) => t.id.equals(1)))
-        .write(
-      UserSettingsTableCompanion(
-        defaultIncrementKg:
-            Value((m['default_increment_kg'] as num?)?.toDouble() ?? 2.5),
-        weightUnit: Value((m['weight_unit'] as String?) ?? 'kg'),
-        defaultRestSeconds:
-            Value((m['default_rest_seconds'] as int?) ?? 120),
-        useRirInsteadOfRpe:
-            Value((m['use_rir_instead_of_rpe'] as bool?) ?? false),
-        userBodyweightKg:
-            Value((m['user_bodyweight_kg'] as num?)?.toDouble()),
-        themeMode: Value((m['theme_mode'] as String?) ?? 'system'),
-        palette: Value((m['palette'] as String?) ?? 'crimson'),
-      ),
-    );
+        .getSingleOrNull();
+    final localUpdated =
+        local?.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+    // Last-write-wins: keep the local row if it was edited more recently than
+    // the cloud copy (e.g. an offline theme change not yet pushed).
+    if (local != null && localUpdated.isAfter(cloudUpdated)) return;
+    // Upsert (not update) so a fresh install with no settings row yet still
+    // receives the cloud values — `watch()` never creates the row.
+    await _db.into(_db.userSettingsTable).insertOnConflictUpdate(
+          UserSettingsTableCompanion(
+            id: const Value(1),
+            defaultIncrementKg:
+                Value((m['default_increment_kg'] as num?)?.toDouble() ?? 2.5),
+            weightUnit: Value((m['weight_unit'] as String?) ?? 'kg'),
+            defaultRestSeconds:
+                Value((m['default_rest_seconds'] as int?) ?? 120),
+            useRirInsteadOfRpe:
+                Value((m['use_rir_instead_of_rpe'] as bool?) ?? false),
+            userBodyweightKg:
+                Value((m['user_bodyweight_kg'] as num?)?.toDouble()),
+            themeMode: Value((m['theme_mode'] as String?) ?? 'system'),
+            palette: Value((m['palette'] as String?) ?? 'crimson'),
+            updatedAt: Value(cloudUpdated),
+          ),
+        );
     report.pulled('user_settings');
   }
 
@@ -830,10 +842,33 @@ class SyncService {
           ..where((t) => t.id.equals(1)))
         .getSingleOrNull();
     if (row == null) return;
+    await _pushSettingsRow(uid, row);
+  }
+
+  /// Last-write-wins push of the settings singleton: never overwrite a cloud
+  /// row that is newer than our local edit. This is what stops the default
+  /// local settings (epoch timestamp) from clobbering real cloud settings on
+  /// a fresh-install / new-device login, where the sync pushes BEFORE pulling.
+  Future<void> _pushSettingsRow(String uid, UserSettingsRow row) async {
+    final localUpdated =
+        row.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+    final cloud = await _sb
+        .from('user_settings')
+        .select('updated_at')
+        .eq('user_id', uid)
+        .limit(1);
+    if ((cloud as List).isNotEmpty) {
+      final cloudUpdated =
+          DateTime.parse((cloud.first as Map)['updated_at'] as String)
+              .toLocal();
+      if (!localUpdated.isAfter(cloudUpdated)) return;
+    }
     await _upsertSettings(_settingsPayload(uid, row));
   }
 
-  /// Build the user_settings cloud payload from a local row.
+  /// Build the user_settings cloud payload from a local row. Sends the real
+  /// local edit time (not "now") so the cloud `updated_at` reflects when the
+  /// user actually changed a setting — the basis for last-write-wins.
   Map<String, dynamic> _settingsPayload(String uid, UserSettingsRow row) => {
         'user_id': uid,
         'default_increment_kg': row.defaultIncrementKg,
@@ -843,7 +878,8 @@ class SyncService {
         'user_bodyweight_kg': row.userBodyweightKg,
         'theme_mode': row.themeMode,
         'palette': row.palette,
-        'updated_at': _isoUtc(DateTime.now()),
+        'updated_at': _isoUtc(
+            row.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0)),
       };
 
   /// Upsert the settings payload, degrading gracefully if the cloud table
@@ -969,7 +1005,7 @@ class SyncService {
           ..where((t) => t.id.equals(1)))
         .getSingleOrNull();
     if (row == null) return;
-    await _upsertSettings(_settingsPayload(uid, row));
+    await _pushSettingsRow(uid, row);
     report.pushed('user_settings', 1);
   }
 

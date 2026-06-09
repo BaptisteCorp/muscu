@@ -56,6 +56,8 @@ class LocalSettingsRepository implements SettingsRepository {
         userBodyweightKg: Value(s.userBodyweightKg),
         themeMode: Value(s.themeMode.name),
         palette: Value(s.palette.name),
+        // Real edit time → wins last-write-wins against the cloud copy.
+        updatedAt: Value(DateTime.now()),
       ),
     );
   }

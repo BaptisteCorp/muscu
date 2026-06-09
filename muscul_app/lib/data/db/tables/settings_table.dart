@@ -14,6 +14,10 @@ class UserSettingsTable extends Table {
   TextColumn get themeMode => text().withDefault(const Constant('system'))();
   // Accent colour palette. Device-local (not synced to the cloud).
   TextColumn get palette => text().withDefault(const Constant('crimson'))();
+  // Last local edit time, for last-write-wins sync. Null = never edited
+  // (the default singleton) → loses every LWW comparison, so a fresh-install
+  // default never overwrites real cloud settings on a push-before-pull sync.
+  DateTimeColumn get updatedAt => dateTime().nullable()();
 
   @override
   Set<Column> get primaryKey => {id};

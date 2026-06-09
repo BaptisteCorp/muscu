@@ -34,7 +34,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(QueryExecutor e) : super(e);
 
   @override
-  int get schemaVersion => 10;
+  int get schemaVersion => 11;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -114,6 +114,12 @@ class AppDatabase extends _$AppDatabase {
           if (from < 10) {
             // Accent colour palette preference (device-local).
             await m.addColumn(userSettingsTable, userSettingsTable.palette);
+          }
+          if (from < 11) {
+            // Last-write-wins timestamp for user_settings sync. Nullable, so
+            // existing rows start null (= never edited) and don't clobber
+            // real cloud settings on the next push-before-pull sync.
+            await m.addColumn(userSettingsTable, userSettingsTable.updatedAt);
           }
         },
         onCreate: (m) async {
