@@ -549,6 +549,125 @@ void main() {
     });
   });
 
+  group('Deload sur stall (2 échecs consécutifs au même poids)', () {
+    test('2 séances échouées à 120kg → deload à 108kg au max de reps', () {
+      final ex = _exercise(
+        priority: ProgressionPriority.weightFirst,
+        min: 6,
+        max: 10,
+        overrideIncrement: 2.0,
+      );
+      final history = [
+        _session([
+          _set(idx: 0, reps: 5, weight: 120),
+          _set(idx: 1, reps: 5, weight: 120),
+          _set(idx: 2, reps: 5, weight: 120),
+        ], id: 'fail2'),
+        _session([
+          _set(idx: 0, reps: 5, weight: 120),
+          _set(idx: 1, reps: 5, weight: 120),
+          _set(idx: 2, reps: 5, weight: 120),
+        ], id: 'fail1'),
+      ];
+      final t = ProgressionEngine.computeNextTarget(
+        exercise: ex,
+        plannedSets: 3,
+        history: history,
+        settings: _settings,
+      );
+      expect(t.targetWeightKg, 108, reason: '120 * 0.9 = 108');
+      expect(t.targetReps, 10, reason: 'haut de fourchette = volume');
+      expect(t.reason, contains('deload'));
+    });
+
+    test('1 seul échec → pas de deload, on tient le poids', () {
+      final ex = _exercise(
+        priority: ProgressionPriority.weightFirst,
+        min: 6,
+        max: 10,
+      );
+      final history = [
+        _session([
+          _set(idx: 0, reps: 5, weight: 120),
+          _set(idx: 1, reps: 5, weight: 120),
+          _set(idx: 2, reps: 5, weight: 120),
+        ]),
+      ];
+      final t = ProgressionEngine.computeNextTarget(
+        exercise: ex,
+        plannedSets: 3,
+        history: history,
+        settings: _settings,
+      );
+      expect(t.targetWeightKg, 120);
+      expect(t.reason, isNot(contains('deload')));
+    });
+
+    test('un succès entre deux échecs casse le compteur (pas de deload)', () {
+      final ex = _exercise(
+        priority: ProgressionPriority.weightFirst,
+        min: 6,
+        max: 10,
+      );
+      final history = [
+        _session([
+          _set(idx: 0, reps: 5, weight: 120),
+          _set(idx: 1, reps: 5, weight: 120),
+          _set(idx: 2, reps: 5, weight: 120),
+        ], id: 'fail-recent'),
+        _session([
+          _set(idx: 0, reps: 8, weight: 120),
+          _set(idx: 1, reps: 8, weight: 120),
+          _set(idx: 2, reps: 8, weight: 120),
+        ], id: 'success'),
+        _session([
+          _set(idx: 0, reps: 5, weight: 120),
+          _set(idx: 1, reps: 5, weight: 120),
+          _set(idx: 2, reps: 5, weight: 120),
+        ], id: 'fail-old'),
+      ];
+      final t = ProgressionEngine.computeNextTarget(
+        exercise: ex,
+        plannedSets: 3,
+        history: history,
+        settings: _settings,
+      );
+      expect(t.targetWeightKg, 120, reason: 'compteur cassé par le succès');
+      expect(t.reason, isNot(contains('deload')));
+    });
+
+    test('deux échecs à des poids différents → pas de deload', () {
+      // Échec à 120 puis échec à 117.5 : ce n'est pas le MÊME poids, donc pas
+      // un stall sur une charge donnée.
+      final ex = _exercise(
+        priority: ProgressionPriority.weightFirst,
+        min: 6,
+        max: 10,
+      );
+      final history = [
+        _session([
+          _set(idx: 0, reps: 5, weight: 117.5),
+          _set(idx: 1, reps: 5, weight: 117.5),
+          _set(idx: 2, reps: 5, weight: 117.5),
+        ], id: 'fail-117'),
+        _session([
+          _set(idx: 0, reps: 5, weight: 120),
+          _set(idx: 1, reps: 5, weight: 120),
+          _set(idx: 2, reps: 5, weight: 120),
+        ], id: 'fail-120'),
+      ];
+      final t = ProgressionEngine.computeNextTarget(
+        exercise: ex,
+        plannedSets: 3,
+        history: history,
+        settings: _settings,
+      );
+      // Ancre = 120 (le plus lourd), mais la séance la plus récente est à
+      // 117.5 → la série d'échecs au poids d'ancrage s'arrête à 0.
+      expect(t.reason, isNot(contains('deload')));
+    });
+  });
+
   group('Scénario complet REPS_FIRST', () {
     test('3 séances : 3x8→3x9→3x10→3x8 +incrément', () {
       final ex = _exercise(min: 8, max: 10, startingWeight: 44);

@@ -30,6 +30,12 @@ import '../models/user_settings.dart';
 ///          et retour au min de reps.
 ///        - WEIGHT_FIRST : on monte le poids à chaque succès en gardant les
 ///          reps identiques (clampées dans la fourchette).
+///   5. Deload : si l'athlète échoue la validation `_deloadStallThreshold`
+///      séances de suite au même poids de travail, on recule de
+///      `_deloadFactor` (charge allégée, reps au max) pour accumuler du
+///      volume et repartir plus fort. Ceci court-circuite le ratchet "up
+///      only" — c'est le seul cas où le moteur baisse volontairement la
+///      charge cible. Le poids changeant, le compteur d'échecs repart de zéro.
 ///
 /// [history] est trié par séance la plus récente en premier.
 class ProgressionEngine {
@@ -105,6 +111,28 @@ class ProgressionEngine {
     );
 
     if (!validation.passed) {
+      // Stall → deload. Si l'athlète a échoué le poids de travail plusieurs
+      // séances d'affilée, le grinder encore est contre-productif : on recule
+      // de ~10% et on vise le haut de la fourchette pour accumuler du volume
+      // à charge gérable, puis on re-grimpe ("the reset").
+      final failures = _consecutiveFailuresAtWeight(
+        history: history,
+        weight: lastWeight,
+        plannedSets: plannedSets,
+        repMin: repMin,
+        rpeThreshold: exercise.minimumRpeThreshold,
+      );
+      if (failures >= _deloadStallThreshold) {
+        final deloadWeight = _deloadWeight(lastWeight, increment);
+        return ProgressionTarget(
+          targetSets: plannedSets,
+          targetReps: repMax,
+          targetWeightKg: deloadWeight,
+          reason: 'Bloqué $failures séances à ${fmtKg(lastWeight)}kg — '
+              'deload à ${fmtKg(deloadWeight)}kg ($repMax reps) pour '
+              'accumuler du volume et repartir plus fort',
+        );
+      }
       return ProgressionTarget(
         targetSets: plannedSets,
         targetReps: lastTopReps.clamp(repMin, repMax),
@@ -204,6 +232,61 @@ class ProgressionEngine {
         .where((e) => e.value == max)
         .map((e) => e.key)
         .reduce((a, b) => a > b ? a : b);
+  }
+
+  /// Nombre d'échecs consécutifs au même poids de travail avant de déclencher
+  /// un deload. À 2, on recule dès le 2e échec d'affilée — plus réactif que le
+  /// standard 3 séances ("mauvais jour"), choix assumé pour ne pas laisser
+  /// l'athlète s'enliser à grinder une charge.
+  static const int _deloadStallThreshold = 2;
+
+  /// Proportion retirée de la charge lors d'un deload — 10%, le "reset"
+  /// classique : assez pour repasser le mur sans perdre trop de terrain.
+  static const double _deloadFactor = 0.10;
+
+  /// Poids de deload : -[_deloadFactor] arrondi à l'incrément, garanti
+  /// strictement sous la charge de travail (jamais négatif).
+  static double _deloadWeight(double workingWeight, double increment) {
+    final inc = increment > 0 ? increment : 1.0;
+    var w = (workingWeight * (1 - _deloadFactor) / inc).round() * inc;
+    if (w >= workingWeight) w = workingWeight - inc;
+    // Cas dégénéré (barre ultra-légère) : on ne descend pas en négatif.
+    if (w < 0) w = workingWeight;
+    return w;
+  }
+
+  /// Nombre de séances les plus récentes, CONSÉCUTIVES, dont le poids de
+  /// travail (mode) vaut [weight] et qui ont échoué la validation. S'arrête au
+  /// premier succès ou au premier poids de travail différent (un recul
+  /// volontaire ou une progression cassent la série d'échecs).
+  static int _consecutiveFailuresAtWeight({
+    required List<SessionExerciseWithSets> history,
+    required double weight,
+    required int plannedSets,
+    required int repMin,
+    required int? rpeThreshold,
+  }) {
+    var count = 0;
+    for (final s in history) {
+      final working =
+          s.sets.where((set) => !set.isWarmup).toList(growable: false);
+      if (working.isEmpty) continue;
+      if (_modeWeight(working) != weight) break;
+      final atWeight = working
+          .where((set) => set.weightKg == weight)
+          .toList(growable: false);
+      final passed = _validate(
+        allWorkingSets: working,
+        workingWeightSets: atWeight,
+        workingWeightKg: weight,
+        plannedSets: plannedSets,
+        repMin: repMin,
+        rpeThreshold: rpeThreshold,
+      ).passed;
+      if (passed) break;
+      count++;
+    }
+    return count;
   }
 
   /// Chute de reps intra-séance maximale tolérée à la charge de travail avant
