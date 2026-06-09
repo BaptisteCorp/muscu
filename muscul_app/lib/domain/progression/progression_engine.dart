@@ -321,7 +321,11 @@ class ProgressionEngine {
     final minReps =
         workingWeightSets.map((s) => s.reps).reduce((a, b) => a < b ? a : b);
     if (minReps < repMin) {
-      return const _Validation(false, 'Reps minimum non atteintes');
+      return _Validation(
+        false,
+        'On consolide ${fmtKg(workingWeightKg)}kg : vise $repMin reps sur '
+        'chaque série avant d\'ajouter de la charge',
+      );
     }
     // Garde anti-fatigue : grosse chute de reps à charge constante.
     if (workingWeightSets.length >= 2) {
