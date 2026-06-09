@@ -15,8 +15,16 @@ import '../models/user_settings.dart';
 ///   3. Sinon, on tente une progression. Elle n'a lieu QUE si :
 ///        - toutes les séries de travail prévues ont été faites
 ///        - les reps minimum de la fourchette ont été atteintes sur chaque set
+///          à la charge de travail
+///        - la chute de reps intra-séance à la charge de travail reste sous
+///          `_maxIntraSessionDropOff` (sinon = fatigue, on consolide)
 ///        - aucun set ne dépasse `minimumRpeThreshold` (les sets sans RPE
 ///          sont considérés comme validés)
+///
+///      Toute l'évaluation reps / drop-off / RPE ne porte QUE sur les séries
+///      à la charge de travail (le poids "mode"). Les séries plus légères de
+///      la même séance — montée en charge (ramp) ou back-off après un échec —
+///      ne comptent ni pour ni contre la progression.
 ///   4. Selon `progressionPriority` :
 ///        - REPS_FIRST : on monte les reps jusqu'au max, puis +incrément kg
 ///          et retour au min de reps.
@@ -54,9 +62,17 @@ class ProgressionEngine {
 
     final workingSets =
         lastWithWork.sets.where((s) => !s.isWarmup).toList(growable: false);
-    final lastTopReps =
-        workingSets.map((s) => s.reps).reduce((a, b) => a < b ? a : b);
     final lastWeight = _modeWeight(workingSets);
+    // Only the sets AT the working (mode) weight inform progression. Lighter
+    // sets in the same session are ramp-ups or back-offs and must not pollute
+    // the rep baseline — otherwise a 100kg back-off after working at 120kg
+    // would drag the target reps down, and a light ramp set would inflate it.
+    final workingWeightSets = workingSets
+        .where((s) => s.weightKg == lastWeight)
+        .toList(growable: false);
+    final lastTopReps = workingWeightSets
+        .map((s) => s.reps)
+        .reduce((a, b) => a < b ? a : b);
 
     // Detect "ratchet kicked in": the most recent session's mode weight is
     // below the anchor's. Means the user underloaded and we kept the
@@ -80,7 +96,9 @@ class ProgressionEngine {
     }
 
     final validation = _validate(
-      workingSets: workingSets,
+      allWorkingSets: workingSets,
+      workingWeightSets: workingWeightSets,
+      workingWeightKg: lastWeight,
       plannedSets: plannedSets,
       repMin: repMin,
       rpeThreshold: exercise.minimumRpeThreshold,
@@ -188,25 +206,59 @@ class ProgressionEngine {
         .reduce((a, b) => a > b ? a : b);
   }
 
+  /// Chute de reps intra-séance maximale tolérée à la charge de travail avant
+  /// que le moteur refuse d'ajouter de la charge.
+  ///
+  /// Une perte de reps d'une série à l'autre au même poids est NORMALE : la
+  /// fatigue s'accumule, et un entraînement mené proche de l'échec avec repos
+  /// court produit couramment ~20-35 % de chute entre la 1re et la dernière
+  /// série. On ne bloque donc QUE les effondrements nets — pire série ≤ 60 %
+  /// de la meilleure (≥ 40 % de chute) — qui trahissent une charge trop lourde
+  /// ou une 1re série partie bien trop près de l'échec. En dessous, la chute
+  /// fait partie du travail et n'empêche pas la progression. La garde des reps
+  /// minimum (`repMin`) couvre déjà le cas « tombé sous la fourchette ».
+  static const double _maxIntraSessionDropOff = 0.40;
+
   static _Validation _validate({
-    required List<SetEntry> workingSets,
+    required List<SetEntry> allWorkingSets,
+    required List<SetEntry> workingWeightSets,
+    required double workingWeightKg,
     required int plannedSets,
     required int repMin,
     required int? rpeThreshold,
   }) {
-    if (workingSets.length < plannedSets) {
+    // Volume : on compte TOUTES les séries de travail (ramp/back-off inclus) —
+    // une montée en charge légère ne doit pas faire échouer ce contrôle.
+    if (allWorkingSets.length < plannedSets) {
       return const _Validation(false,
           'Toutes les séries n\'ont pas été validées à la dernière séance, '
           'on reste au même poids');
     }
+    // À partir d'ici, on ne juge que les séries à la charge de travail.
     final minReps =
-        workingSets.map((s) => s.reps).reduce((a, b) => a < b ? a : b);
+        workingWeightSets.map((s) => s.reps).reduce((a, b) => a < b ? a : b);
     if (minReps < repMin) {
       return const _Validation(false, 'Reps minimum non atteintes');
     }
+    // Garde anti-fatigue : grosse chute de reps à charge constante.
+    if (workingWeightSets.length >= 2) {
+      final maxReps = workingWeightSets
+          .map((s) => s.reps)
+          .reduce((a, b) => a > b ? a : b);
+      if (maxReps > 0 &&
+          (maxReps - minReps) / maxReps >= _maxIntraSessionDropOff) {
+        return _Validation(
+          false,
+          'Grosse chute de reps à ${fmtKg(workingWeightKg)}kg '
+          '($maxReps→$minReps) — signe de fatigue, on consolide ce poids '
+          'avant d\'ajouter de la charge',
+        );
+      }
+    }
     if (rpeThreshold != null) {
       // Les sets sans RPE renseigné sont considérés validés (on les ignore).
-      final ratedSets = workingSets.where((s) => s.rpe != null).toList();
+      final ratedSets =
+          workingWeightSets.where((s) => s.rpe != null).toList();
       if (ratedSets.isNotEmpty) {
         final maxRpe =
             ratedSets.map((s) => s.rpe!).reduce((a, b) => a > b ? a : b);

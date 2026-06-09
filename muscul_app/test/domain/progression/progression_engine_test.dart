@@ -441,6 +441,114 @@ void main() {
     });
   });
 
+  group('Garde anti-fatigue (chute de reps intra-séance)', () {
+    test('8→6 reps (25%) à charge constante → progresse (fatigue normale)', () {
+      final ex = _exercise(
+        priority: ProgressionPriority.weightFirst,
+        min: 6,
+        max: 10,
+      );
+      final history = [
+        _session([
+          _set(idx: 0, reps: 8, weight: 120),
+          _set(idx: 1, reps: 6, weight: 120),
+          _set(idx: 2, reps: 8, weight: 120),
+        ]),
+      ];
+      final t = ProgressionEngine.computeNextTarget(
+        exercise: ex,
+        plannedSets: 3,
+        history: history,
+        settings: _settings,
+      );
+      // 25% < 40% → fatigue normale, on progresse.
+      expect(t.targetWeightKg, 122);
+    });
+
+    test('effondrement 10→5 reps (50%) → pas de progression', () {
+      // minReps (5) est au-dessus du plancher (5) — c'est la garde drop-off,
+      // pas la garde repMin, qui doit attraper ce cas.
+      final ex = _exercise(
+        priority: ProgressionPriority.weightFirst,
+        min: 5,
+        max: 12,
+      );
+      final history = [
+        _session([
+          _set(idx: 0, reps: 10, weight: 120),
+          _set(idx: 1, reps: 5, weight: 120),
+          _set(idx: 2, reps: 6, weight: 120),
+        ]),
+      ];
+      final t = ProgressionEngine.computeNextTarget(
+        exercise: ex,
+        plannedSets: 3,
+        history: history,
+        settings: _settings,
+      );
+      // 50% ≥ 40% → effondrement, on tient 120.
+      expect(t.targetWeightKg, 120);
+      expect(t.reason, contains('chute de reps'));
+    });
+
+    test(
+        'séance loggée réelle : [110x9, 120x8, 120x6, 100x8] → progresse à 122kg',
+        () {
+      // Mode = 120 (ramp 110 et back-off 100 ignorés). Chute 8→6 = 25% < 40%
+      // → fatigue normale, on progresse depuis la charge de travail (120).
+      final ex = _exercise(
+        priority: ProgressionPriority.weightFirst,
+        min: 6,
+        max: 10,
+      );
+      final history = [
+        _session([
+          _set(idx: 0, reps: 9, weight: 110),
+          _set(idx: 1, reps: 8, weight: 120),
+          _set(idx: 2, reps: 6, weight: 120),
+          _set(idx: 3, reps: 8, weight: 100),
+        ]),
+      ];
+      final t = ProgressionEngine.computeNextTarget(
+        exercise: ex,
+        plannedSets: 4,
+        history: history,
+        settings: _settings,
+      );
+      expect(t.targetWeightKg, 122,
+          reason: 'progresse depuis 120, pas depuis 100/110');
+      expect(t.targetReps, 6, reason: 'pire série à 120kg');
+    });
+  });
+
+  group('Garde charges mixtes (ramp / back-off ignorés)', () {
+    test('back-off léger n\'écrase pas la baseline reps', () {
+      // 120x8, 120x8, puis back-off 100x5. Sans le filtre charge-de-travail,
+      // le 100x5 ferait croire à un échec (min reps = 5). Avec le filtre,
+      // seules les séries à 120 comptent → 8 reps propres → progression.
+      final ex = _exercise(
+        priority: ProgressionPriority.weightFirst,
+        min: 6,
+        max: 10,
+      );
+      final history = [
+        _session([
+          _set(idx: 0, reps: 8, weight: 120),
+          _set(idx: 1, reps: 8, weight: 120),
+          _set(idx: 2, reps: 5, weight: 100),
+        ]),
+      ];
+      final t = ProgressionEngine.computeNextTarget(
+        exercise: ex,
+        plannedSets: 3,
+        history: history,
+        settings: _settings,
+      );
+      expect(t.targetWeightKg, 122, reason: '120 propre → +incrément');
+      expect(t.targetReps, 8);
+    });
+  });
+
   group('Scénario complet REPS_FIRST', () {
     test('3 séances : 3x8→3x9→3x10→3x8 +incrément', () {
       final ex = _exercise(min: 8, max: 10, startingWeight: 44);
