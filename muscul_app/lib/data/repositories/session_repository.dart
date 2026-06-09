@@ -287,9 +287,19 @@ class LocalSessionRepository implements SessionRepository {
       WHERE s.ended_at IS NOT NULL
         AND s.deleted_at IS NULL
         AND e.deleted_at IS NULL
+        AND EXISTS (
+          SELECT 1 FROM set_entries entry
+          WHERE entry.session_exercise_id = se.id
+            AND entry.is_warmup = 0
+        )
       GROUP BY se.exercise_id
       ''',
-      readsFrom: {db.sessionExercises, db.workoutSessions, db.exercises},
+      readsFrom: {
+        db.sessionExercises,
+        db.workoutSessions,
+        db.exercises,
+        db.setEntries,
+      },
     ).watch().map((rows) {
       final map = <String, int>{};
       for (final r in rows) {

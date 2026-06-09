@@ -25,12 +25,13 @@ class ExerciseProgressionTab extends ConsumerStatefulWidget {
 class _ExerciseProgressionTabState
     extends ConsumerState<ExerciseProgressionTab> {
   Exercise? _selected;
-  bool _trainedOnly = true;
 
   @override
   Widget build(BuildContext context) {
     final asyncExercises = ref.watch(allExercisesProvider);
     final asyncTrained = ref.watch(trainedExerciseIdsProvider);
+    final usageCounts = ref.watch(exerciseUsageCountsProvider).valueOrNull ??
+        const <String, int>{};
 
     return asyncExercises.when(
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -38,22 +39,21 @@ class _ExerciseProgressionTabState
         data: (list) {
           final trainedIds = asyncTrained.valueOrNull ?? const <String>[];
           final byId = {for (final e in list) e.id: e};
-          final trainedExercises = [
+          // Seuls les exos déjà entraînés sont proposés (les autres n'ont rien
+          // à afficher), triés du plus fait au moins fait.
+          final ordered = [
             for (final id in trainedIds)
               if (byId[id] != null) byId[id]!,
-          ];
-          final restExercises = [
-            for (final e in list)
-              if (!trainedIds.contains(e.id)) e,
-          ];
-          final ordered = _trainedOnly && trainedExercises.isNotEmpty
-              ? trainedExercises
-              : [...trainedExercises, ...restExercises];
+          ]..sort((a, b) {
+              final ca = usageCounts[a.id] ?? 0;
+              final cb = usageCounts[b.id] ?? 0;
+              if (cb != ca) return cb.compareTo(ca);
+              return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+            });
+          final trainedExercises = ordered;
 
           final selected = _selected ??
-              (trainedExercises.isNotEmpty
-                  ? trainedExercises.first
-                  : (list.isNotEmpty ? list.first : null));
+              (ordered.isNotEmpty ? ordered.first : null);
 
           if (list.isEmpty) {
             return const Center(
@@ -79,31 +79,16 @@ class _ExerciseProgressionTabState
                   ),
                 ),
               if (trainedExercises.isNotEmpty) ...[
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('${trainedExercises.length} exo'
-                        '${trainedExercises.length > 1 ? 's' : ''} entraîné'
-                        '${trainedExercises.length > 1 ? 's' : ''}'),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Text('Entraînés uniquement'),
-                        Switch(
-                          value: _trainedOnly,
-                          onChanged: (v) => setState(() => _trainedOnly = v),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+                Text('${trainedExercises.length} exo'
+                    '${trainedExercises.length > 1 ? 's' : ''} entraîné'
+                    '${trainedExercises.length > 1 ? 's' : ''}'),
                 const SizedBox(height: 8),
               ],
               if (selected != null)
                 _ExercisePicker(
                   selected: selected,
                   exercises: ordered,
-                  trainedIds: trainedIds.toSet(),
+                  usageCounts: usageCounts,
                   onChanged: (ex) => setState(() => _selected = ex),
                 ),
               const SizedBox(height: 16),
@@ -115,56 +100,183 @@ class _ExerciseProgressionTabState
   }
 }
 
+/// Tappable "form field" showing the current exercise. Tapping opens a
+/// searchable bottom sheet (list sorted most-trained first) — far more
+/// instinctive than a native dropdown menu for a long catalogue.
 class _ExercisePicker extends StatelessWidget {
   final Exercise selected;
   final List<Exercise> exercises;
-  final Set<String> trainedIds;
+  final Map<String, int> usageCounts;
   final ValueChanged<Exercise> onChanged;
   const _ExercisePicker({
     required this.selected,
     required this.exercises,
-    required this.trainedIds,
+    required this.usageCounts,
     required this.onChanged,
   });
 
+  Future<void> _open(BuildContext context) async {
+    final picked = await showModalBottomSheet<Exercise>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => _ExerciseSearchSheet(
+        exercises: exercises,
+        usageCounts: usageCounts,
+        selectedId: selected.id,
+      ),
+    );
+    if (picked != null) onChanged(picked);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final value =
-        exercises.any((e) => e.id == selected.id) ? selected.id : null;
-    return DropdownButtonFormField<String>(
-      value: value,
-      isExpanded: true,
-      decoration: const InputDecoration(
-        labelText: 'Exercice',
-        border: OutlineInputBorder(),
-      ),
-      items: [
-        for (final e in exercises)
-          DropdownMenuItem(
-            value: e.id,
-            child: Row(
-              children: [
-                if (trainedIds.contains(e.id))
-                  const Padding(
-                    padding: EdgeInsets.only(right: 6),
-                    child: Icon(Icons.check_circle,
-                        size: 16, color: Colors.green),
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: () => _open(context),
+      borderRadius: BorderRadius.circular(AppTokens.radiusM),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: cs.surfaceContainer,
+          borderRadius: BorderRadius.circular(AppTokens.radiusM),
+          border: Border.all(color: cs.outlineVariant),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'EXERCICE',
+                    style: TextStyle(
+                      color: cs.onSurfaceVariant,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.2,
+                    ),
                   ),
-                Expanded(
-                  child: ExerciseNameLabel(
-                    name: e.name,
-                    equipment: e.equipment,
+                  const SizedBox(height: 2),
+                  ExerciseNameLabel(
+                    name: selected.name,
+                    equipment: selected.equipment,
                     maxLines: 1,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-      ],
-      onChanged: (id) {
-        final ex = exercises.firstWhere((e) => e.id == id);
-        onChanged(ex);
-      },
+            const SizedBox(width: 8),
+            Icon(Icons.unfold_more_rounded, color: cs.onSurfaceVariant),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Bottom sheet to pick an exercise: a search box on top, then the trained
+/// exercises (most-done first) with their usage count and a check on the
+/// current one. Pops the chosen [Exercise].
+class _ExerciseSearchSheet extends StatefulWidget {
+  final List<Exercise> exercises;
+  final Map<String, int> usageCounts;
+  final String selectedId;
+  const _ExerciseSearchSheet({
+    required this.exercises,
+    required this.usageCounts,
+    required this.selectedId,
+  });
+
+  @override
+  State<_ExerciseSearchSheet> createState() => _ExerciseSearchSheetState();
+}
+
+class _ExerciseSearchSheetState extends State<_ExerciseSearchSheet> {
+  String _search = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final q = _search.trim().toLowerCase();
+    final filtered = q.isEmpty
+        ? widget.exercises
+        : widget.exercises
+            .where((e) => e.name.toLowerCase().contains(q))
+            .toList();
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.85,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      expand: false,
+      builder: (_, controller) => Padding(
+        padding: EdgeInsets.fromLTRB(
+            12, 10, 12, MediaQuery.of(context).viewInsets.bottom + 8),
+        child: Column(
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: cs.outlineVariant,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            TextField(
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.search),
+                hintText: 'Rechercher un exercice...',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              onChanged: (v) => setState(() => _search = v),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: filtered.isEmpty
+                  ? Center(
+                      child: Text(
+                        'Aucun exercice',
+                        style: TextStyle(color: cs.onSurfaceVariant),
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: controller,
+                      itemCount: filtered.length,
+                      itemBuilder: (_, i) {
+                        final e = filtered[i];
+                        final count = widget.usageCounts[e.id] ?? 0;
+                        final isSel = e.id == widget.selectedId;
+                        return ListTile(
+                          selected: isSel,
+                          title: ExerciseNameLabel(
+                            name: e.name,
+                            equipment: e.equipment,
+                          ),
+                          subtitle: Text(
+                            count > 0
+                                ? 'fait $count fois'
+                                : muscleLabel(e.primaryMuscle),
+                          ),
+                          trailing: isSel
+                              ? Icon(Icons.check_rounded, color: cs.primary)
+                              : null,
+                          onTap: () => Navigator.pop(context, e),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

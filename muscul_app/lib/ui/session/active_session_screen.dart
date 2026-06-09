@@ -13,7 +13,6 @@ import '../../core/utils/formatters.dart';
 import '../../core/utils/one_rep_max.dart';
 import '../../data/repositories/session_repository.dart';
 import '../../data/sync/sync_service.dart';
-import '../../domain/models/enums.dart';
 import '../../domain/models/exercise.dart';
 import '../../domain/models/progression_target.dart';
 import '../../domain/models/session.dart';
@@ -483,11 +482,15 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
     final extraSlots = _extraSlots[item.sessionExercise.id] ?? 0;
     // Plan length is the canonical "target sets" when a plan exists.
     final plannedCount = plan.isNotEmpty ? plan.length : target.targetSets;
-    final totalSlots = [
-      plannedCount,
-      savedCount + skipped.length,
-      3,
-    ].reduce((a, b) => a > b ? a : b) + extraSlots;
+    // Base = plan (min 3 for freestyle) + the sets the user explicitly added
+    // with the "+". We never spawn a fresh empty set just because the previous
+    // one was validated — extra sets are added on demand only. We still widen
+    // to fit every already-saved/skipped set so nothing gets hidden.
+    final baseSlots =
+        [plannedCount, 3].reduce((a, b) => a > b ? a : b) + extraSlots;
+    final totalSlots = baseSlots > savedCount + skipped.length
+        ? baseSlots
+        : savedCount + skipped.length;
 
     // Classify every slot. The whole set sequence is now shown as a single
     // strip of dots — validated sets are a green check (tap to edit), skipped
@@ -522,6 +525,14 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
     }
     final progressDots = SetProgressDots(states: slotStates, taps: slotTaps);
 
+    // Validating the active set finishes the exercise when no further set is
+    // still pending after it (the user can always add one with "+"). Used to
+    // auto-advance to the next exercise's page.
+    final validatingFinishesExercise = activePos >= 0 &&
+        !slotStates
+            .skip(activePos + 1)
+            .any((s) => s == SetRowState.pending);
+
     // The single stepper card for the set in progress (null once all done).
     Widget? activeRow;
     if (activePos >= 0) {
@@ -546,11 +557,25 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
         onRpeChanged: (v) => setState(() {
           setPendingFor(activePos, p.copyWith(rpe: v));
         }),
-        onValidate: () => _validateSet(
+        onValidate: () async {
+          await _validateSet(
             item, p, settings, plannedCount,
             setPos: activePos,
             restSeconds: item.sessionExercise.restSeconds ??
-                exercise.effectiveRestSeconds(settings.defaultRestSeconds)),
+                exercise.effectiveRestSeconds(settings.defaultRestSeconds),
+          );
+          // Dernière série de l'exo validée → on enchaîne automatiquement sur
+          // l'exo suivant (s'il y en a un).
+          if (validatingFinishesExercise &&
+              index < items.length - 1 &&
+              mounted &&
+              _pageCtrl.hasClients) {
+            _pageCtrl.nextPage(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOut,
+            );
+          }
+        },
         onSkip: () => setState(() {
           _skipped[item.sessionExercise.id] = {...skipped, activePos};
         }),
