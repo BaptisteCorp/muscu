@@ -26,6 +26,9 @@ class SessionExercises extends Table {
   TextColumn get supersetGroupId => text().nullable()();
   TextColumn get note => text().nullable()();
   TextColumn get replacedFromSessionExerciseId => text().nullable()();
+  // Last local edit, for last-write-wins sync. Nullable: existing rows are
+  // backfilled by migration; null loses every LWW comparison (cloud wins).
+  DateTimeColumn get updatedAt => dateTime().nullable()();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -44,6 +47,8 @@ class SetEntries extends Table {
   BoolColumn get isWarmup => boolean().withDefault(const Constant(false))();
   BoolColumn get isFailure => boolean().withDefault(const Constant(false))();
   DateTimeColumn get completedAt => dateTime()();
+  // Last local edit, for last-write-wins sync (see SessionExercises.updatedAt).
+  DateTimeColumn get updatedAt => dateTime().nullable()();
 
   @override
   Set<Column> get primaryKey => {id};

@@ -237,7 +237,10 @@ class LocalSessionRepository implements SessionRepository {
     required int fromOrderIndex,
   }) async {
     await db.customStatement(
-      'UPDATE session_exercises SET order_index = order_index + 1 '
+      'UPDATE session_exercises SET order_index = order_index + 1, '
+      // Bumpe le tampon LWW pour que le nouvel ordre gagne à la sync (Drift
+      // stocke les DateTime en secondes unix → strftime('%s') concorde).
+      "updated_at = CAST(strftime('%s','now') AS INTEGER) "
       'WHERE session_id = ? AND order_index >= ?',
       [sessionId, fromOrderIndex],
     );

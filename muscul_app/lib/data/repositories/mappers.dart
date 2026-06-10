@@ -198,6 +198,8 @@ SessionExercisesCompanion sessionExerciseToCompanion(SessionExercise se) =>
       note: drift.Value(se.note),
       replacedFromSessionExerciseId:
           drift.Value(se.replacedFromSessionExerciseId),
+      // Tout write local rafraîchit le tampon LWW.
+      updatedAt: drift.Value(DateTime.now()),
     );
 
 SetEntry setFromRow(SetEntryEntity row) => SetEntry(
@@ -226,6 +228,8 @@ SetEntriesCompanion setToCompanion(SetEntry s) => SetEntriesCompanion.insert(
       isWarmup: drift.Value(s.isWarmup),
       isFailure: drift.Value(s.isFailure),
       completedAt: s.completedAt,
+      // Tout write local rafraîchit le tampon LWW.
+      updatedAt: drift.Value(DateTime.now()),
     );
 
 // --- UserSettings -------------------------------------------------

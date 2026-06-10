@@ -52,6 +52,56 @@ void main() {
     });
   });
 
+  group('LWW — updatedAt stampé sur les enfants de séance', () {
+    test('upsertSet stampe updatedAt', () async {
+      final repo = LocalSessionRepository(db);
+      await repo.upsertSet(SetEntry(
+        id: 'set-1',
+        sessionExerciseId: 'se-1',
+        setIndex: 0,
+        reps: 8,
+        weightKg: 20,
+        restSeconds: 0,
+        completedAt: DateTime(2026, 1, 1),
+      ));
+      final row = await (db.select(db.setEntries)
+            ..where((t) => t.id.equals('set-1')))
+          .getSingle();
+      expect(row.updatedAt, isNotNull);
+    });
+
+    test('upsertSessionExercise stampe updatedAt', () async {
+      final repo = LocalSessionRepository(db);
+      await repo.upsertSessionExercise(const SessionExercise(
+        id: 'se-1',
+        sessionId: 's1',
+        exerciseId: 'ex-1',
+        orderIndex: 0,
+      ));
+      final row = await (db.select(db.sessionExercises)
+            ..where((t) => t.id.equals('se-1')))
+          .getSingle();
+      expect(row.updatedAt, isNotNull);
+    });
+
+    test('shiftSessionExerciseOrder bumpe order_index ET updatedAt', () async {
+      final repo = LocalSessionRepository(db);
+      await repo.upsertSessionExercise(const SessionExercise(
+        id: 'se-1',
+        sessionId: 's1',
+        exerciseId: 'ex-1',
+        orderIndex: 0,
+      ));
+      await repo.shiftSessionExerciseOrder(sessionId: 's1', fromOrderIndex: 0);
+      final row = await (db.select(db.sessionExercises)
+            ..where((t) => t.id.equals('se-1')))
+          .getSingle();
+      expect(row.orderIndex, 1);
+      expect(row.updatedAt, isNotNull,
+          reason: 'le nouvel ordre doit gagner au LWW cross-device');
+    });
+  });
+
   group('Swap d\'exo — orderIndex sans collision', () {
     test('shiftSessionExerciseOrder libère la place, ordre déterministe',
         () async {

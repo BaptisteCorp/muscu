@@ -350,9 +350,30 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
     if (!_dirty) return true;
     final canSave = _nameCtrl.text.trim().isNotEmpty && !_hasFormErrors;
     if (canSave) {
-      // _persist renvoie false si l'utilisateur annule l'avertissement
-      // "exercice utilisé" → on reste sur l'écran (on ne pop pas).
-      return await _persist();
+      if (await _persist()) return true;
+      // _persist a renvoyé false → l'utilisateur a annulé l'avertissement
+      // "exercice utilisé". Plutôt que de le bloquer silencieusement, on lui
+      // propose explicitement de quitter sans enregistrer.
+      if (!mounted) return false;
+      final leave = await showDialog<bool>(
+        context: context,
+        builder: (dialogCtx) => AlertDialog(
+          title: const Text('Quitter sans enregistrer ?'),
+          content: const Text(
+              'Tes modifications ne seront pas sauvegardées.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx, false),
+              child: const Text('Rester'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogCtx, true),
+              child: const Text('Quitter'),
+            ),
+          ],
+        ),
+      );
+      return leave == true;
     }
     final discard = await showDialog<bool>(
       context: context,

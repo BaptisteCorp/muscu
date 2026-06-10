@@ -34,7 +34,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(QueryExecutor e) : super(e);
 
   @override
-  int get schemaVersion => 13;
+  int get schemaVersion => 14;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -143,6 +143,26 @@ class AppDatabase extends _$AppDatabase {
             // Point de redémarrage de la progression par exercice : le moteur
             // ignore l'historique antérieur et repart du poids de départ.
             await m.addColumn(exercises, exercises.progressionResetAt);
+          }
+          if (from < 14) {
+            // updated_at pour la sync LWW des enfants de séance (le cloud a
+            // déjà ces colonnes). Ajout en SQL brut + backfill par une date
+            // plausible : completed_at pour les séries, started_at de la séance
+            // parente pour les session_exercises (0/epoch pour les orphelins).
+            for (final t in ['session_exercises', 'set_entries']) {
+              try {
+                await customStatement(
+                    'ALTER TABLE $t ADD COLUMN updated_at INTEGER;');
+              } catch (_) {/* déjà présente */}
+            }
+            await customStatement(
+                'UPDATE set_entries SET updated_at = completed_at '
+                'WHERE updated_at IS NULL;');
+            await customStatement(
+                'UPDATE session_exercises SET updated_at = COALESCE('
+                '(SELECT ws.started_at FROM workout_sessions ws '
+                'WHERE ws.id = session_exercises.session_id), 0) '
+                'WHERE updated_at IS NULL;');
           }
         },
         onCreate: (m) async {

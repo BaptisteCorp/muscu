@@ -216,5 +216,48 @@ void main() {
       expect(await templateUpdatedAt(), DateTime(2026, 1, 1),
           reason: 'aucune série hors plage → pas de bump');
     });
+
+    test('ne bumpe QUE les modèles dont une série a été clampée', () async {
+      // t1 utilise ex-a avec plannedReps 10 (sera hors plage 6-8 → clampé).
+      await seedTemplate([te('te-a', 'ex-a', 0)]);
+      // t2 utilise aussi ex-a mais avec plannedReps 7 (déjà dans 6-8).
+      await repo.upsertTemplate(WorkoutTemplate(
+        id: 't2',
+        name: 'B',
+        createdAt: DateTime(2026, 1, 1),
+        updatedAt: DateTime(2026, 1, 1),
+      ));
+      await repo.setTemplateExercises('t2', [
+        TemplateExerciseWithSets(
+          exercise: const WorkoutTemplateExercise(
+            id: 'te-a2',
+            templateId: 't2',
+            exerciseId: 'ex-a',
+            orderIndex: 0,
+            targetSets: 1,
+            restSeconds: 90,
+          ),
+          sets: const [
+            TemplateExerciseSet(
+              id: 'te-a2-s0',
+              templateExerciseId: 'te-a2',
+              setIndex: 0,
+              plannedReps: 7,
+              plannedWeightKg: 40,
+            ),
+          ],
+        ),
+      ]);
+
+      await repo.clampPlannedRepsForExercise(exerciseId: 'ex-a', min: 6, max: 8);
+
+      // t1 corrigé (10 → 8) donc bumpé ; t2 intact donc PAS bumpé.
+      expect((await templateUpdatedAt()).isAfter(DateTime(2026, 1, 1)), isTrue);
+      final t2 = await (db.select(db.workoutTemplates)
+            ..where((t) => t.id.equals('t2')))
+          .getSingle();
+      expect(t2.updatedAt, DateTime(2026, 1, 1),
+          reason: 't2 n\'avait aucune série hors plage → pas de resync inutile');
+    });
   });
 }

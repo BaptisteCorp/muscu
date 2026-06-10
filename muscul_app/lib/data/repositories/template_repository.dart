@@ -252,21 +252,35 @@ class LocalTemplateRepository implements TemplateRepository {
           .get();
       if (teRows.isEmpty) return;
       final teIds = teRows.map((r) => r.id).toList();
+      // Repère d'abord les template-exercises qui ont AU MOINS une série hors
+      // plage, pour ne bumper (et resync) que les modèles réellement modifiés —
+      // pas tous ceux qui référencent l'exo.
+      final outOfRange = await (db.select(db.templateExerciseSets)
+            ..where((t) =>
+                t.templateExerciseId.isIn(teIds) &
+                (t.plannedReps.isSmallerThanValue(min) |
+                    t.plannedReps.isBiggerThanValue(max))))
+          .get();
+      if (outOfRange.isEmpty) return;
+      final affectedTeIds =
+          outOfRange.map((s) => s.templateExerciseId).toSet();
       // Reps sous le plancher → plancher ; au-dessus du plafond → plafond.
-      final below = await (db.update(db.templateExerciseSets)
+      await (db.update(db.templateExerciseSets)
             ..where((t) =>
                 t.templateExerciseId.isIn(teIds) &
                 t.plannedReps.isSmallerThanValue(min)))
           .write(TemplateExerciseSetsCompanion(plannedReps: Value(min)));
-      final above = await (db.update(db.templateExerciseSets)
+      await (db.update(db.templateExerciseSets)
             ..where((t) =>
                 t.templateExerciseId.isIn(teIds) &
                 t.plannedReps.isBiggerThanValue(max)))
           .write(TemplateExerciseSetsCompanion(plannedReps: Value(max)));
-      if (below == 0 && above == 0) return;
-      // On bumpe tous les modèles référençant l'exo pour que la sync (LWW sur
-      // updated_at) reprenne les reps planifiées corrigées.
-      final templateIds = teRows.map((r) => r.templateId).toSet().toList();
+      // Bump LWW uniquement des modèles dont un template-exercise a été corrigé.
+      final templateIds = teRows
+          .where((r) => affectedTeIds.contains(r.id))
+          .map((r) => r.templateId)
+          .toSet()
+          .toList();
       await (db.update(db.workoutTemplates)..where((t) => t.id.isIn(templateIds)))
           .write(WorkoutTemplatesCompanion(
         updatedAt: Value(DateTime.now()),

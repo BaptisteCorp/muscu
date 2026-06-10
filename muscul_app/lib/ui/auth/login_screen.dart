@@ -54,13 +54,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       // bounce back to the home screen with a success snack.
       if (auth.isLoggedIn) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          // On capture le messenger AVANT de pop : pop démonte le Scaffold de
+          // /login, donc afficher après coup viserait un messenger mort. Le
+          // messenger ancêtre (MainScaffold) survit, lui.
+          final messenger = ScaffoldMessenger.of(context);
+          context.pop();
+          messenger.showSnackBar(
             const SnackBar(
               content: Text('Connecté ✓'),
               duration: Duration(seconds: 2),
             ),
           );
-          context.pop();
         }
         return;
       }

@@ -419,6 +419,40 @@ void main() {
     );
 
     testWidgets(
+      'retour système puis annuler l\'avertissement → propose de quitter, '
+      'sortie sans sauvegarde',
+      (tester) async {
+        final h = await buildHarness();
+        addTearDown(h.dispose);
+        final id = await seedCustomExercise(h.db);
+        await seedTemplateUsing(h.db, id);
+        await pumpHarness(tester, h);
+        await pushAndSettle(tester, h, '/exercise/$id');
+
+        await tester.enterText(fieldByLabel('Nom'), 'Renommé');
+        await tester.pumpAndSettle();
+
+        // Retour système → avertissement "exercice utilisé".
+        await systemBack(tester);
+        expect(find.text('Modifier un exercice utilisé ?'), findsOneWidget);
+
+        // Annuler l'avertissement → au lieu de piéger, on propose de quitter.
+        await tester.tap(find.widgetWithText(TextButton, 'Annuler'));
+        await tester.pumpAndSettle();
+        expect(find.text('Quitter sans enregistrer ?'), findsOneWidget);
+
+        await tester.tap(find.widgetWithText(FilledButton, 'Quitter'));
+        await tester.pumpAndSettle();
+
+        // Sorti vers le home, et rien enregistré.
+        expect(find.text('test-home'), findsOneWidget);
+        final after = await readById(h.db, id);
+        expect(after.name, 'Mon développé', reason: 'quitté sans sauvegarder');
+        await teardownTree(tester);
+      },
+    );
+
+    testWidgets(
       'changement non matériel (repos) sur exo utilisé → pas de dialogue',
       (tester) async {
         final h = await buildHarness();

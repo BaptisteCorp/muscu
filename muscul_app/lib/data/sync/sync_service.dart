@@ -268,9 +268,20 @@ class SyncService {
         .eq('user_id', uid);
     for (final r in rows as List) {
       final m = r as Map<String, dynamic>;
+      final id = m['id'] as String;
+      final cloudUpdated = _parseDt(m['updated_at']);
+      // LWW : on garde la version locale si elle est au moins aussi récente.
+      final local = await (_db.select(_db.sessionExercises)
+            ..where((t) => t.id.equals(id)))
+          .getSingleOrNull();
+      if (local?.updatedAt != null &&
+          cloudUpdated != null &&
+          !local!.updatedAt!.isBefore(cloudUpdated)) {
+        continue;
+      }
       await _db.into(_db.sessionExercises).insertOnConflictUpdate(
             SessionExercisesCompanion.insert(
-              id: m['id'] as String,
+              id: id,
               sessionId: m['session_id'] as String,
               exerciseId: m['exercise_id'] as String,
               orderIndex: m['order_index'] as int,
@@ -280,6 +291,7 @@ class SyncService {
               note: Value(m['note'] as String?),
               replacedFromSessionExerciseId: Value(
                   m['replaced_from_session_exercise_id'] as String?),
+              updatedAt: Value(cloudUpdated),
             ),
           );
       report.pulled('session_exercises');
@@ -293,9 +305,19 @@ class SyncService {
         .eq('user_id', uid);
     for (final r in rows as List) {
       final m = r as Map<String, dynamic>;
+      final id = m['id'] as String;
+      final cloudUpdated = _parseDt(m['updated_at']);
+      final local = await (_db.select(_db.setEntries)
+            ..where((t) => t.id.equals(id)))
+          .getSingleOrNull();
+      if (local?.updatedAt != null &&
+          cloudUpdated != null &&
+          !local!.updatedAt!.isBefore(cloudUpdated)) {
+        continue;
+      }
       await _db.into(_db.setEntries).insertOnConflictUpdate(
             SetEntriesCompanion.insert(
-              id: m['id'] as String,
+              id: id,
               sessionExerciseId: m['session_exercise_id'] as String,
               setIndex: m['set_index'] as int,
               reps: m['reps'] as int,
@@ -307,6 +329,7 @@ class SyncService {
               isFailure: Value((m['is_failure'] as bool?) ?? false),
               completedAt:
                   DateTime.parse(m['completed_at'] as String).toLocal(),
+              updatedAt: Value(cloudUpdated),
             ),
           );
       report.pulled('set_entries');
@@ -536,53 +559,96 @@ class SyncService {
     final exRows = await (_db.select(_db.sessionExercises)
           ..where((t) => t.sessionId.equals(sessionId)))
         .get();
-    if (exRows.isEmpty) return;
-    final now = _isoUtc(DateTime.now());
-    await _sb.from('session_exercises').upsert(
-      [
-        for (final r in exRows)
-          {
-            'id': r.id,
-            'user_id': uid,
-            'session_id': r.sessionId,
-            'exercise_id': r.exerciseId,
-            'order_index': r.orderIndex,
-            'rest_seconds': r.restSeconds,
-            'superset_group_id': r.supersetGroupId,
-            'note': r.note,
-            'replaced_from_session_exercise_id':
-                r.replacedFromSessionExerciseId,
-            'updated_at': now,
-          }
-      ],
-      onConflict: 'user_id,id',
-    );
-    final exIds = exRows.map((r) => r.id).toList();
-    final setRows = await (_db.select(_db.setEntries)
-          ..where((t) => t.sessionExerciseId.isIn(exIds)))
-        .get();
-    if (setRows.isEmpty) return;
-    await _sb.from('set_entries').upsert(
-      [
-        for (final r in setRows)
-          {
-            'id': r.id,
-            'user_id': uid,
-            'session_exercise_id': r.sessionExerciseId,
-            'set_index': r.setIndex,
-            'reps': r.reps,
-            'weight_kg': r.weightKg,
-            'rpe': r.rpe,
-            'rir': r.rir,
-            'rest_seconds': r.restSeconds,
-            'is_warmup': r.isWarmup,
-            'is_failure': r.isFailure,
-            'completed_at': _isoUtc(r.completedAt),
-            'updated_at': _isoUtc(r.completedAt),
-          }
-      ],
-      onConflict: 'user_id,id',
-    );
+    final localExIds = exRows.map((r) => r.id).toList();
+    if (exRows.isNotEmpty) {
+      await _sb.from('session_exercises').upsert(
+        [
+          for (final r in exRows)
+            {
+              'id': r.id,
+              'user_id': uid,
+              'session_id': r.sessionId,
+              'exercise_id': r.exerciseId,
+              'order_index': r.orderIndex,
+              'rest_seconds': r.restSeconds,
+              'superset_group_id': r.supersetGroupId,
+              'note': r.note,
+              'replaced_from_session_exercise_id':
+                  r.replacedFromSessionExerciseId,
+              'updated_at': _isoUtc(r.updatedAt ?? DateTime.now()),
+            }
+        ],
+        onConflict: 'user_id,id',
+      );
+    }
+    final setRows = localExIds.isEmpty
+        ? const <SetEntryEntity>[]
+        : await (_db.select(_db.setEntries)
+              ..where((t) => t.sessionExerciseId.isIn(localExIds)))
+            .get();
+    final localSetIds = setRows.map((r) => r.id).toList();
+    if (setRows.isNotEmpty) {
+      await _sb.from('set_entries').upsert(
+        [
+          for (final r in setRows)
+            {
+              'id': r.id,
+              'user_id': uid,
+              'session_exercise_id': r.sessionExerciseId,
+              'set_index': r.setIndex,
+              'reps': r.reps,
+              'weight_kg': r.weightKg,
+              'rpe': r.rpe,
+              'rir': r.rir,
+              'rest_seconds': r.restSeconds,
+              'is_warmup': r.isWarmup,
+              'is_failure': r.isFailure,
+              'completed_at': _isoUtc(r.completedAt),
+              'updated_at': _isoUtc(r.updatedAt ?? r.completedAt),
+            }
+        ],
+        onConflict: 'user_id,id',
+      );
+    }
+
+    // --- Reconcile cloud deletions (cf. pushTemplate) --------------------
+    // Un exo/série supprimé localement (swap, abandon, suppression) doit aussi
+    // disparaître du cloud, sinon le prochain pull le ressuscite via
+    // insertOnConflictUpdate. Les upserts ci-dessus n'insèrent/màj jamais ne
+    // suppriment — d'où ce rattrapage par différence d'ids.
+    final cloudExResp = await _sb
+        .from('session_exercises')
+        .select('id')
+        .eq('user_id', uid)
+        .eq('session_id', sessionId);
+    final cloudExIds = [for (final r in cloudExResp) r['id'] as String];
+    final staleExIds =
+        staleCloudIds(localIds: localExIds, cloudIds: cloudExIds);
+    if (staleExIds.isNotEmpty) {
+      // Séries d'abord pour ne pas orphaniser le cloud si on est interrompu.
+      await _sb
+          .from('set_entries')
+          .delete()
+          .eq('user_id', uid)
+          .inFilter('session_exercise_id', staleExIds);
+      await _sb
+          .from('session_exercises')
+          .delete()
+          .eq('user_id', uid)
+          .inFilter('id', staleExIds);
+    }
+    // Séries retirées d'un exo CONSERVÉ (ex. l'utilisateur a effacé une série).
+    if (localExIds.isNotEmpty) {
+      var del = _sb
+          .from('set_entries')
+          .delete()
+          .eq('user_id', uid)
+          .inFilter('session_exercise_id', localExIds);
+      if (localSetIds.isNotEmpty) {
+        del = del.not('id', 'in', '(${localSetIds.join(',')})');
+      }
+      await del;
+    }
   }
 
   /// Push a single template row + every WorkoutTemplateExercise and
@@ -775,7 +841,7 @@ class SyncService {
       'note': row.note,
       'replaced_from_session_exercise_id':
           row.replacedFromSessionExerciseId,
-      'updated_at': _isoUtc(DateTime.now()),
+      'updated_at': _isoUtc(row.updatedAt ?? DateTime.now()),
     }, onConflict: 'user_id,id');
   }
 
@@ -801,7 +867,7 @@ class SyncService {
       'is_warmup': row.isWarmup,
       'is_failure': row.isFailure,
       'completed_at': _isoUtc(row.completedAt),
-      'updated_at': _isoUtc(DateTime.now()),
+      'updated_at': _isoUtc(row.updatedAt ?? row.completedAt),
     }, onConflict: 'user_id,id');
   }
 
@@ -968,7 +1034,7 @@ class SyncService {
               'note': r.note,
               'replaced_from_session_exercise_id':
                   r.replacedFromSessionExerciseId,
-              'updated_at': _isoUtc(DateTime.now()),
+              'updated_at': _isoUtc(r.updatedAt ?? DateTime.now()),
             })
         .toList();
     await _sb
@@ -994,7 +1060,7 @@ class SyncService {
               'is_warmup': r.isWarmup,
               'is_failure': r.isFailure,
               'completed_at': _isoUtc(r.completedAt),
-              'updated_at': _isoUtc(r.completedAt),
+              'updated_at': _isoUtc(r.updatedAt ?? r.completedAt),
             })
         .toList();
     await _sb
