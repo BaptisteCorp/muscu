@@ -53,6 +53,13 @@ class ProgressionEngine {
     final repMin = exercise.targetRepRangeMin;
     final repMax = exercise.targetRepRangeMax;
 
+    // Redémarrage de progression : si l'utilisateur a changé le poids de départ
+    // (geste « je repars d'ici »), on ignore toute séance antérieure à cette
+    // date. Sinon le ratchet "up only" rappellerait l'ancien poids et le poids
+    // de départ ne servirait jamais. Une fois filtré, un exo sans séance
+    // postérieure retombe naturellement sur la branche "première séance".
+    history = _afterReset(history, exercise.progressionResetAt);
+
     // Poids du corps : on ne prescrit JAMAIS de charge — la surcharge passe
     // uniquement par les reps. Toute la machinerie poids (mode, ratchet,
     // deload) est court-circuitée et le poids cible reste à 0.
@@ -311,6 +318,23 @@ class ProgressionEngine {
       if (s.sets.any((set) => !set.isWarmup)) return s;
     }
     return null;
+  }
+
+  /// Ne garde que les séances effectuées (strictement) après [resetAt]. Une
+  /// séance est datée par le `completedAt` le plus récent de ses séries. Une
+  /// séance sans série dont la date est inconnue est exclue dès qu'un reset est
+  /// posé (elle ne porte de toute façon aucune info de progression). Si
+  /// [resetAt] est null, l'historique est renvoyé tel quel.
+  static List<SessionExerciseWithSets> _afterReset(
+      List<SessionExerciseWithSets> history, DateTime? resetAt) {
+    if (resetAt == null) return history;
+    return history.where((s) {
+      if (s.sets.isEmpty) return false;
+      final last = s.sets
+          .map((set) => set.completedAt)
+          .reduce((a, b) => a.isAfter(b) ? a : b);
+      return last.isAfter(resetAt);
+    }).toList(growable: false);
   }
 
   /// Mode weight of the most recent session that has working sets, or null

@@ -32,6 +32,15 @@ abstract class SessionRepository {
   Future<List<String>> pruneStaleInProgress();
   Future<void> upsertSessionExercise(SessionExercise se);
   Future<void> deleteSessionExercise(String id);
+
+  /// Incrémente `orderIndex` de toutes les session-exercises de [sessionId]
+  /// dont l'`orderIndex` est >= [fromOrderIndex]. Sert à faire de la place
+  /// avant d'insérer un exo substitué juste après l'original, pour que l'ordre
+  /// reste déterministe (sinon deux exos partagent le même orderIndex).
+  Future<void> shiftSessionExerciseOrder({
+    required String sessionId,
+    required int fromOrderIndex,
+  });
   Future<void> upsertSet(SetEntry s);
   Future<void> deleteSet(String id);
 
@@ -46,6 +55,7 @@ abstract class SessionRepository {
   Future<List<SetEntry>> findBestMatchingSets({
     required String exerciseId,
     required int preferSetCount,
+    DateTime? after,
   });
 
   /// Same as [historyForExercise] but reactive — re-emits on writes.
@@ -219,6 +229,18 @@ class LocalSessionRepository implements SessionRepository {
     await db
         .into(db.sessionExercises)
         .insertOnConflictUpdate(sessionExerciseToCompanion(se));
+  }
+
+  @override
+  Future<void> shiftSessionExerciseOrder({
+    required String sessionId,
+    required int fromOrderIndex,
+  }) async {
+    await db.customStatement(
+      'UPDATE session_exercises SET order_index = order_index + 1 '
+      'WHERE session_id = ? AND order_index >= ?',
+      [sessionId, fromOrderIndex],
+    );
   }
 
   @override
@@ -496,6 +518,7 @@ class LocalSessionRepository implements SessionRepository {
   Future<List<SetEntry>> findBestMatchingSets({
     required String exerciseId,
     required int preferSetCount,
+    DateTime? after,
   }) async {
     // Pull the 30 most recent ended session_exercises of this exo, then
     // filter their working sets in memory.
@@ -510,6 +533,11 @@ class LocalSessionRepository implements SessionRepository {
       ..where(db.workoutSessions.deletedAt.isNull())
       ..orderBy([OrderingTerm.desc(db.workoutSessions.endedAt)])
       ..limit(30);
+    // Redémarrage de progression : on ignore les séances antérieures au reset
+    // pour que le plan prérempli reparte du poids de départ, pas de l'ancien.
+    if (after != null) {
+      query.where(db.workoutSessions.endedAt.isBiggerThanValue(after));
+    }
     final rows = await query.get();
     if (rows.isEmpty) return const [];
 

@@ -15,6 +15,7 @@ Exercise _exercise({
   double startingWeight = 44,
   double? overrideIncrement = 2.0,
   bool useBodyweight = false,
+  DateTime? resetAt,
 }) {
   return Exercise(
     id: 'ex-1',
@@ -31,6 +32,7 @@ Exercise _exercise({
     startingWeightKg: startingWeight,
     defaultIncrementKg: overrideIncrement,
     useBodyweight: useBodyweight,
+    progressionResetAt: resetAt,
     updatedAt: DateTime(2026, 1, 1),
   );
 }
@@ -41,6 +43,7 @@ SetEntry _set({
   required double weight,
   int? rpe,
   bool warmup = false,
+  DateTime? date,
 }) {
   return SetEntry(
     id: 's$idx-${DateTime.now().microsecondsSinceEpoch}-$reps',
@@ -51,7 +54,7 @@ SetEntry _set({
     rpe: rpe,
     restSeconds: 120,
     isWarmup: warmup,
-    completedAt: DateTime(2026, 1, 1),
+    completedAt: date ?? DateTime(2026, 1, 1),
   );
 }
 
@@ -80,6 +83,81 @@ void main() {
       expect(t.targetSets, 3);
       expect(t.targetReps, 6);
       expect(t.targetWeightKg, 30);
+    });
+  });
+
+  group('Redémarrage de progression (progressionResetAt)', () {
+    test(
+        'séance lourde antérieure au reset est ignorée → repart du poids de départ',
+        () {
+      // L'exo a été entraîné à 30kg AVANT le reset. L'utilisateur change le
+      // poids de départ à 20 (reset posé). Le moteur doit ignorer la séance à
+      // 30 et reprendre à 20, pas ratcheter vers 30.
+      final ex = _exercise(
+        startingWeight: 20,
+        min: 8,
+        max: 12,
+        resetAt: DateTime(2026, 2, 1),
+      );
+      final history = [
+        _session([
+          _set(idx: 0, reps: 10, weight: 30, date: DateTime(2026, 1, 15)),
+          _set(idx: 1, reps: 10, weight: 30, date: DateTime(2026, 1, 15)),
+          _set(idx: 2, reps: 10, weight: 30, date: DateTime(2026, 1, 15)),
+        ]),
+      ];
+      final t = ProgressionEngine.computeNextTarget(
+        exercise: ex,
+        plannedSets: 3,
+        history: history,
+        settings: _settings,
+      );
+      expect(t.targetWeightKg, 20);
+      expect(t.targetReps, 8);
+      expect(t.reason, 'Première séance');
+    });
+
+    test('séance postérieure au reset compte normalement', () {
+      final ex = _exercise(
+        startingWeight: 20,
+        min: 8,
+        max: 12,
+        resetAt: DateTime(2026, 2, 1),
+      );
+      // Une séance à 20kg APRÈS le reset, top de fourchette atteint → +incrément.
+      final history = [
+        _session([
+          _set(idx: 0, reps: 12, weight: 20, date: DateTime(2026, 2, 10)),
+          _set(idx: 1, reps: 12, weight: 20, date: DateTime(2026, 2, 10)),
+          _set(idx: 2, reps: 12, weight: 20, date: DateTime(2026, 2, 10)),
+        ]),
+      ];
+      final t = ProgressionEngine.computeNextTarget(
+        exercise: ex,
+        plannedSets: 3,
+        history: history,
+        settings: _settings,
+      );
+      expect(t.targetWeightKg, 22); // 20 + incrément 2.0
+      expect(t.targetReps, 8);
+    });
+
+    test('sans reset, l\'historique lourd reste l\'ancre (régression)', () {
+      final ex = _exercise(startingWeight: 20, min: 8, max: 12);
+      final history = [
+        _session([
+          _set(idx: 0, reps: 10, weight: 30, date: DateTime(2026, 1, 15)),
+          _set(idx: 1, reps: 10, weight: 30, date: DateTime(2026, 1, 15)),
+          _set(idx: 2, reps: 10, weight: 30, date: DateTime(2026, 1, 15)),
+        ]),
+      ];
+      final t = ProgressionEngine.computeNextTarget(
+        exercise: ex,
+        plannedSets: 3,
+        history: history,
+        settings: _settings,
+      );
+      expect(t.targetWeightKg, 30); // ancré sur l'historique, pas sur les 20
     });
   });
 

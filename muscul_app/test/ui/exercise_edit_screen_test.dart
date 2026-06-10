@@ -465,4 +465,70 @@ void main() {
       },
     );
   });
+
+  group('ExerciseEditScreen — reset de progression', () {
+    testWidgets(
+      'sauver un exo poids-du-corps (start weight résiduel) ne reset PAS la '
+      'progression',
+      (tester) async {
+        final h = await buildHarness();
+        addTearDown(h.dispose);
+        const id = 'bw-1';
+        await LocalExerciseRepository(h.db).upsert(Exercise(
+          id: id,
+          name: 'Tractions',
+          category: ExerciseCategory.pull,
+          primaryMuscle: MuscleGroup.lats,
+          secondaryMuscles: const [],
+          equipment: Equipment.bodyweight,
+          isCustom: true,
+          targetRepRangeMin: 5,
+          targetRepRangeMax: 10,
+          // Poids résiduel non nul (donnée d'avant le "force 0") — c'est ce qui
+          // déclenchait un reset parasite à chaque save.
+          startingWeightKg: 20,
+          useBodyweight: true,
+          updatedAt: DateTime(2026, 4, 30),
+        ));
+        await pumpHarness(tester, h);
+        await pushAndSettle(tester, h, '/exercise/$id');
+
+        // Modif NON matérielle (repos) pour rendre le formulaire dirty et
+        // déclencher la sauvegarde, sans changer poids/fourchette.
+        await tester.enterText(fieldByLabel('Repos par défaut (s)'), '120');
+        await tester.pumpAndSettle();
+        await tester.tap(find.byIcon(Icons.check));
+        await tester.pumpAndSettle();
+
+        final after = await readById(h.db, id);
+        expect(after.progressionResetAt, isNull,
+            reason: 'un exo au poids du corps ne doit jamais se reset au save');
+        expect(after.startingWeightKg, 0,
+            reason: 'poids forcé à 0 au poids du corps');
+        await teardownTree(tester);
+      },
+    );
+
+    testWidgets(
+      'changer le poids de départ d\'un exo chargé POSE bien le reset',
+      (tester) async {
+        final h = await buildHarness();
+        addTearDown(h.dispose);
+        final id = await seedCustomExercise(h.db); // start 50, non-bodyweight
+        await pumpHarness(tester, h);
+        await pushAndSettle(tester, h, '/exercise/$id');
+
+        await tester.enterText(fieldByLabel('Poids départ (kg)'), '60');
+        await tester.pumpAndSettle();
+        await tester.tap(find.byIcon(Icons.check));
+        await tester.pumpAndSettle();
+
+        final after = await readById(h.db, id);
+        expect(after.startingWeightKg, 60);
+        expect(after.progressionResetAt, isNotNull,
+            reason: 'changer le poids de départ d\'un exo chargé = reset');
+        await teardownTree(tester);
+      },
+    );
+  });
 }

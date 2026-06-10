@@ -222,9 +222,14 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
     if (initial == null || !_hasMaterialChange(initial)) return true;
 
     final id = initial.id;
-    final trained =
-        ref.read(trainedExerciseIdsProvider).valueOrNull ?? const <String>[];
-    final loggedUse = trained.contains(id);
+    // One-shot query (PAS le StreamProvider trainedExerciseIdsProvider) : lire
+    // un .watch() ici ouvrirait un stream Drift jamais fermé → timer pendant et
+    // pumpAndSettle qui ne se stabilise plus en test. cf. note ".get() vs
+    // .watch()". L'exo est « entraîné » s'il a au moins une série de travail
+    // dans une séance terminée.
+    final history =
+        await ref.read(sessionRepositoryProvider).historyForExercise(id);
+    final loggedUse = history.any((h) => h.sets.any((s) => !s.isWarmup));
     final templateCount =
         await ref.read(templateRepositoryProvider).countTemplatesUsingExercise(id);
     if (!loggedUse && templateCount == 0) return true;
@@ -274,6 +279,21 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
     final rpeRaw = _rpeThresholdCtrl.text.trim();
     final rpeThreshold = rpeRaw.isEmpty ? null : int.tryParse(rpeRaw);
     final now = DateTime.now();
+    // Changer le poids de départ = « je redémarre la progression ici » : on pose
+    // un point de reset pour que le moteur ignore l'historique antérieur et
+    // reparte de cette valeur (sinon le ratchet up-only rappellerait l'ancien
+    // poids). Sur un exo neuf il n'y a pas d'historique → inutile.
+    final initial = _initial;
+    // On ne redémarre la progression que pour un exo CHARGÉ dont le poids de
+    // départ change vraiment. Au poids du corps le poids est forcé à 0 et n'a
+    // aucun sens : sans ce garde, un exo bodyweight avec un startingWeightKg
+    // résiduel (ex. 20 d'avant le fix) se reset à CHAQUE save et jette tout
+    // l'historique de reps. cf. _bodyweightTarget (progression sur les reps).
+    final startWeightChanged = initial != null &&
+        !_useBodyweight &&
+        initial.startingWeightKg != startWeight;
+    final progressionResetAt =
+        startWeightChanged ? now : initial?.progressionResetAt;
     final exercise = Exercise(
       id: id,
       name: name,
@@ -286,6 +306,7 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
       isCustom: _initial?.isCustom ?? true,
       progressiveOverloadEnabled: _progressiveOverloadEnabled,
       minimumRpeThreshold: rpeThreshold,
+      progressionResetAt: progressionResetAt,
       targetRepRangeMin: repMin,
       targetRepRangeMax: repMax,
       startingWeightKg: startWeight,
@@ -312,7 +333,6 @@ class _ExerciseEditScreenState extends ConsumerState<ExerciseEditScreen> {
 
     // Si la fourchette de reps a changé, les reps planifiées (snapshot) des
     // modèles qui utilisent cet exo peuvent être hors plage → on les borne.
-    final initial = _initial;
     if (initial != null &&
         (repMin != initial.targetRepRangeMin ||
             repMax != initial.targetRepRangeMax)) {

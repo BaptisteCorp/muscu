@@ -15,9 +15,26 @@ class StartSessionController {
   StartSessionController(this.ref);
   final Ref ref;
 
+  /// Démarrage en cours, s'il y en a un. Déduplique les appels concurrents :
+  /// un double-tap rapide sur une carte de séance (rien ne désactive le tap
+  /// pendant l'await) appellerait deux fois `startSession` et créerait DEUX
+  /// séances en cours — dont une orpheline jamais affichée (watchInProgress
+  /// ne renvoie que la plus récente). On renvoie le même Future tant que le
+  /// premier n'est pas terminé.
+  Future<String>? _inFlight;
+
   /// If [templateId] is provided, the session is materialized from the template.
   /// If null, an empty freestyle session is created.
-  Future<String> startSession({String? templateId}) async {
+  Future<String> startSession({String? templateId}) {
+    final existing = _inFlight;
+    if (existing != null) return existing;
+    final future = _start(templateId: templateId);
+    _inFlight = future;
+    future.whenComplete(() => _inFlight = null);
+    return future;
+  }
+
+  Future<String> _start({String? templateId}) async {
     final sessions = ref.read(sessionRepositoryProvider);
     final id = _uuid.v4();
     final now = DateTime.now();

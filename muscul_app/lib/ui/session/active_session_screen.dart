@@ -61,6 +61,11 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
   // Plan from the template, indexed by exerciseId → list of planned sets
   // (sorted by setIndex). Empty list = no template plan (freestyle session).
   Map<String, List<TemplateExerciseSet>> _planByExercise = const {};
+  // session-exercise ids whose set validation is currently in flight. Guards
+  // against a rapid double-tap on VALIDER inserting two rows at the same
+  // setIndex (the index is derived from the captured set count, which only
+  // updates once the stream rebuilds after the first write completes).
+  final Set<String> _validating = {};
   Timer? _sessionTicker;
   Duration _elapsed = Duration.zero;
   int _currentPage = 0;
@@ -798,46 +803,60 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
   Future<void> _validateSet(SessionExerciseWithSets item, PendingSet p,
       UserSettings settings, int targetSets,
       {required int setPos, required bool useBodyweight, int? restSeconds}) async {
-    final restElapsed =
-        _restCtrl.captureAndStart(restSeconds ?? settings.defaultRestSeconds);
-    HapticFeedback.lightImpact();
-    final entry = SetEntry(
-      id: _uuid.v4(),
-      sessionExerciseId: item.sessionExercise.id,
-      setIndex: item.sets.length,
-      reps: p.reps,
-      weightKg: p.weight,
-      rpe: p.rpe,
-      restSeconds: restElapsed,
-      completedAt: DateTime.now(),
-    );
-    final repo = ref.read(sessionRepositoryProvider);
-    await repo.upsertSet(entry);
-    // Drop the pending override for this set so the next active row picks
-    // its plan-derived default — needed for schemes like 7+6 reps.
-    setState(() {
-      _pending[item.sessionExercise.id]?.remove(setPos);
-    });
-    // Fire-and-forget the cloud push so validating a set doesn't block the
-    // UI on a slow network. Local DB has the row already; the next full
-    // sync (app start / login / resume) retries on failure.
-    final svc = ref.read(syncServiceProvider);
-    svc.pushSet(entry.id).ignore();
-    // Ratchet: if this session was started from a template, sync the
-    // validated set's reps/weight back into the template so the user
-    // sees the latest progression next time they look at it or start
-    // another session from the same template.
-    final detail = await repo.getDetail(widget.sessionId);
-    final templateId = detail?.session.templateId;
-    if (templateId != null) {
-      await ref.read(templateRepositoryProvider).applyValidatedSet(
-            templateId: templateId,
-            exerciseId: item.sessionExercise.exerciseId,
-            reps: entry.reps,
-            weightKg: entry.weightKg,
-            useBodyweight: useBodyweight,
-          );
-      svc.pushTemplate(templateId).ignore();
+    final seId = item.sessionExercise.id;
+    // Anti double-tap : si une validation est déjà en vol pour cet exo, on
+    // ignore. Sinon deux taps rapides insèrent deux séries au MÊME setIndex
+    // (dérivé de item.sets.length, figé jusqu'au rebuild du stream).
+    if (_validating.contains(seId)) return;
+    _validating.add(seId);
+    try {
+      final restElapsed =
+          _restCtrl.captureAndStart(restSeconds ?? settings.defaultRestSeconds);
+      HapticFeedback.lightImpact();
+      final entry = SetEntry(
+        id: _uuid.v4(),
+        sessionExerciseId: seId,
+        setIndex: item.sets.length,
+        reps: p.reps,
+        weightKg: p.weight,
+        rpe: p.rpe,
+        restSeconds: restElapsed,
+        completedAt: DateTime.now(),
+      );
+      final repo = ref.read(sessionRepositoryProvider);
+      await repo.upsertSet(entry);
+      // L'écran a pu être démonté pendant l'écriture (pause/abandon/back) :
+      // ne pas toucher au state ni à ref après dispose.
+      if (!mounted) return;
+      // Drop the pending override for this set so the next active row picks
+      // its plan-derived default — needed for schemes like 7+6 reps.
+      setState(() {
+        _pending[seId]?.remove(setPos);
+      });
+      // Fire-and-forget the cloud push so validating a set doesn't block the
+      // UI on a slow network. Local DB has the row already; the next full
+      // sync (app start / login / resume) retries on failure.
+      final svc = ref.read(syncServiceProvider);
+      svc.pushSet(entry.id).ignore();
+      // Ratchet: if this session was started from a template, sync the
+      // validated set's reps/weight back into the template so the user
+      // sees the latest progression next time they look at it or start
+      // another session from the same template.
+      final detail = await repo.getDetail(widget.sessionId);
+      if (!mounted) return;
+      final templateId = detail?.session.templateId;
+      if (templateId != null) {
+        await ref.read(templateRepositoryProvider).applyValidatedSet(
+              templateId: templateId,
+              exerciseId: item.sessionExercise.exerciseId,
+              reps: entry.reps,
+              weightKg: entry.weightKg,
+              useBodyweight: useBodyweight,
+            );
+        svc.pushTemplate(templateId).ignore();
+      }
+    } finally {
+      _validating.remove(seId);
     }
   }
 
@@ -877,12 +896,19 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
         orderIndex: item.sessionExercise.orderIndex,
       );
     } else {
-      // Keep old, insert new just after.
+      // Keep old, insert new just after. On décale d'abord tous les exos
+      // suivants pour libérer l'orderIndex cible — sinon le nouvel exo et le
+      // suivant partagent le même index et leur ordre devient indéterminé.
+      final insertAt = item.sessionExercise.orderIndex + 1;
+      await repo.shiftSessionExerciseOrder(
+        sessionId: widget.sessionId,
+        fromOrderIndex: insertAt,
+      );
       await addExerciseToSession(
         ref: ref,
         sessionId: widget.sessionId,
         exerciseId: picked.id,
-        orderIndex: item.sessionExercise.orderIndex + 1,
+        orderIndex: insertAt,
         replacedFromSessionExerciseId: item.sessionExercise.id,
       );
     }

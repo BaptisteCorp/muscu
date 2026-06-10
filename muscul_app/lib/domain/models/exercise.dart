@@ -21,6 +21,12 @@ class Exercise {
   /// contrainte RPE. Les sets sans RPE renseigné sont considérés validés.
   final int? minimumRpeThreshold;
 
+  /// Date de redémarrage de la progression. Le moteur de surcharge ignore
+  /// toute séance antérieure à cette date et repart de [startingWeightKg].
+  /// `null` = jamais redémarré (tout l'historique compte). Posée quand on
+  /// change le poids de départ dans l'éditeur. Synchronisée (LWW).
+  final DateTime? progressionResetAt;
+
   final int targetRepRangeMin;
   final int targetRepRangeMax;
   final double startingWeightKg;
@@ -49,6 +55,7 @@ class Exercise {
     required this.updatedAt,
     this.progressiveOverloadEnabled = true,
     this.minimumRpeThreshold,
+    this.progressionResetAt,
     this.useBodyweight = false,
     this.defaultIncrementKg,
     this.defaultRestSeconds,
@@ -74,6 +81,8 @@ class Exercise {
     bool? progressiveOverloadEnabled,
     int? minimumRpeThreshold,
     bool clearMinimumRpeThreshold = false,
+    DateTime? progressionResetAt,
+    bool clearProgressionResetAt = false,
     int? targetRepRangeMin,
     int? targetRepRangeMax,
     double? startingWeightKg,
@@ -110,6 +119,9 @@ class Exercise {
       minimumRpeThreshold: clearMinimumRpeThreshold
           ? null
           : (minimumRpeThreshold ?? this.minimumRpeThreshold),
+      progressionResetAt: clearProgressionResetAt
+          ? null
+          : (progressionResetAt ?? this.progressionResetAt),
       targetRepRangeMin: targetRepRangeMin ?? this.targetRepRangeMin,
       targetRepRangeMax: targetRepRangeMax ?? this.targetRepRangeMax,
       startingWeightKg: startingWeightKg ?? this.startingWeightKg,

@@ -773,6 +773,7 @@ class _PlanEditorSheetState extends ConsumerState<_PlanEditorSheet> {
         .findBestMatchingSets(
           exerciseId: widget.exercise.id,
           preferSetCount: _sets.length,
+          after: widget.exercise.progressionResetAt,
         );
     if (!mounted || sets.isEmpty) return;
     if (_userTouched && !force) return;

@@ -28,3 +28,4 @@ android/app/release/
 .env.*
 lib/.env.json
 lib/.env*.json
+test/fixtures/muscu_dump.json

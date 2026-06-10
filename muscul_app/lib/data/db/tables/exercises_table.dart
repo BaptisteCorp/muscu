@@ -14,6 +14,11 @@ class Exercises extends Table {
   BoolColumn get progressiveOverloadEnabled =>
       boolean().withDefault(const Constant(true))();
   IntColumn get minimumRpeThreshold => integer().nullable()();
+  // Point de redémarrage de la progression : le moteur ignore tout l'historique
+  // de séances antérieur à cette date et repart de `startingWeightKg`. Posé
+  // quand l'utilisateur change le poids de départ (geste « je redémarre ici »).
+  // Synchronisé (LWW sur updated_at) pour propager le reset entre appareils.
+  DateTimeColumn get progressionResetAt => dateTime().nullable()();
   IntColumn get targetRepRangeMin => integer().withDefault(const Constant(8))();
   IntColumn get targetRepRangeMax => integer().withDefault(const Constant(12))();
   RealColumn get startingWeightKg =>

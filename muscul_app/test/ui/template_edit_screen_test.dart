@@ -158,6 +158,7 @@ void main() {
         await tester.pumpAndSettle();
 
         expect(await readFirstWeight(h.db, ids.templateId), 72.5);
+        await teardownTree(tester);
       },
     );
 
@@ -186,6 +187,7 @@ void main() {
         await systemBack(tester);
 
         expect(await readFirstWeight(h.db, ids.templateId), 85);
+        await teardownTree(tester);
       },
     );
 
@@ -210,6 +212,7 @@ void main() {
         await systemBack(tester);
 
         expect(await readFirstReps(h.db, ids.templateId), 12);
+        await teardownTree(tester);
       },
     );
 
@@ -232,6 +235,7 @@ void main() {
         final repo = LocalTemplateRepository(h.db);
         final t = await repo.getWithExercises(ids.templateId);
         expect(t?.template.name, 'Push B');
+        await teardownTree(tester);
       },
     );
 
@@ -258,6 +262,7 @@ void main() {
         await systemBack(tester);
 
         expect(await readFirstWeight(h.db, ids.templateId), 60);
+        await teardownTree(tester);
       },
     );
 
@@ -283,6 +288,7 @@ void main() {
             .template
             .updatedAt;
         expect(after, beforeUpdatedAt);
+        await teardownTree(tester);
       },
     );
 
@@ -354,6 +360,7 @@ void main() {
         await systemBack(tester);
 
         expect(await readExerciseCount(h.db, ids.templateId), 1);
+        await teardownTree(tester);
       },
     );
   });
@@ -375,6 +382,7 @@ void main() {
         // Still on the editor screen (Scaffold + AppBar title still
         // visible).
         expect(find.text('Nouveau template'), findsOneWidget);
+        await teardownTree(tester);
       },
     );
 
@@ -392,6 +400,7 @@ void main() {
         await tester.pumpAndSettle();
 
         expect(find.text('Ajoute au moins un exercice'), findsOneWidget);
+        await teardownTree(tester);
       },
     );
 
@@ -429,6 +438,7 @@ void main() {
         // And no template should have been created.
         final all = await h.db.select(h.db.workoutTemplates).get();
         expect(all.where((t) => t.deletedAt == null), isEmpty);
+        await teardownTree(tester);
       },
     );
   });
@@ -461,6 +471,7 @@ void main() {
 
         // Popped back home.
         expect(find.text('test-home'), findsOneWidget);
+        await teardownTree(tester);
       },
     );
   });

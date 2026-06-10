@@ -102,3 +102,24 @@ Future<void> pumpHarness(WidgetTester tester, TestHarness h) async {
   await tester.pumpWidget(h.widget);
   await tester.pumpAndSettle();
 }
+
+/// Démonte l'arbre de widgets À L'INTÉRIEUR du corps du test, puis draine les
+/// timers résiduels.
+///
+/// Les StreamProviders Drift globaux (allExercisesProvider, exerciseByIdProvider,
+/// exerciseUsageCountsProvider…) ne sont PAS autoDispose : ils ne se ferment
+/// qu'au dispose du ProviderScope racine. Or Drift programme alors un
+/// `Timer(Duration.zero)` de fermeture de stream (StreamQueryStore.markAsClosed)
+/// qui reste « pending » au moment où le framework de test vérifie ses
+/// invariants → « A Timer is still pending even after the widget tree was
+/// disposed ». `addTearDown` s'exécute trop tard (après cette vérification).
+/// En remontant un widget vide ici, on dispose les providers DANS le corps du
+/// test et le `pumpAndSettle` qui suit laisse le timer se déclencher.
+///
+/// À appeler en dernière ligne de chaque test qui monte un écran abonné à ces
+/// streams. Les `expect` qui lisent la DB peuvent rester avant : ils
+/// n'ouvrent pas de widget.
+Future<void> teardownTree(WidgetTester tester) async {
+  await tester.pumpWidget(const SizedBox.shrink());
+  await tester.pumpAndSettle();
+}

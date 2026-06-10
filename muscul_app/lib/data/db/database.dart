@@ -34,7 +34,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(QueryExecutor e) : super(e);
 
   @override
-  int get schemaVersion => 12;
+  int get schemaVersion => 13;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -138,6 +138,11 @@ class AppDatabase extends _$AppDatabase {
               await customStatement(
                   'ALTER TABLE exercises DROP COLUMN progression_priority;');
             } catch (_) {/* déjà absente */}
+          }
+          if (from < 13) {
+            // Point de redémarrage de la progression par exercice : le moteur
+            // ignore l'historique antérieur et repart du poids de départ.
+            await m.addColumn(exercises, exercises.progressionResetAt);
           }
         },
         onCreate: (m) async {

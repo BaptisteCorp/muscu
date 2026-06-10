@@ -123,6 +123,8 @@ class SyncService {
                   (m['progressive_overload_enabled'] as bool?) ?? true),
               minimumRpeThreshold:
                   Value(m['minimum_rpe_threshold'] as int?),
+              progressionResetAt:
+                  Value(_parseDt(m['progression_reset_at'])),
               targetRepRangeMin: Value(m['target_rep_range_min'] as int? ?? 8),
               targetRepRangeMax:
                   Value(m['target_rep_range_max'] as int? ?? 12),
@@ -418,6 +420,7 @@ class SyncService {
               'default_rest_seconds': r.defaultRestSeconds,
               'progressive_overload_enabled': r.progressiveOverloadEnabled,
               'minimum_rpe_threshold': r.minimumRpeThreshold,
+              'progression_reset_at': _isoUtcN(r.progressionResetAt),
               'target_rep_range_min': r.targetRepRangeMin,
               'target_rep_range_max': r.targetRepRangeMax,
               'starting_weight_kg': r.startingWeightKg,
@@ -736,6 +739,7 @@ class SyncService {
       'default_rest_seconds': row.defaultRestSeconds,
       'progressive_overload_enabled': row.progressiveOverloadEnabled,
       'minimum_rpe_threshold': row.minimumRpeThreshold,
+      'progression_reset_at': _isoUtcN(row.progressionResetAt),
       'target_rep_range_min': row.targetRepRangeMin,
       'target_rep_range_max': row.targetRepRangeMax,
       'starting_weight_kg': row.startingWeightKg,

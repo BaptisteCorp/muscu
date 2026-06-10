@@ -17,8 +17,8 @@ create table if not exists public.exercises (
   default_increment_kg double precision,
   default_rest_seconds integer,
   progressive_overload_enabled boolean not null default true,
-  progression_priority text not null default 'repsFirst',
   minimum_rpe_threshold integer,
+  progression_reset_at timestamptz,
   target_rep_range_min integer not null default 8,
   target_rep_range_max integer not null default 12,
   starting_weight_kg double precision not null default 20.0,
@@ -40,17 +40,21 @@ alter table public.exercises
   add column if not exists progressive_overload_enabled
     boolean not null default true;
 alter table public.exercises
-  add column if not exists progression_priority
-    text not null default 'repsFirst';
-alter table public.exercises
   add column if not exists minimum_rpe_threshold integer;
 alter table public.exercises
   add column if not exists use_bodyweight boolean not null default false;
--- Column removed when the progression refactor landed; drop it if a
--- pre-refactor Supabase project still has it, otherwise it'd block sync
--- pushes that no longer reference it.
+-- Progression reset point: the engine ignores history before this date and
+-- restarts from starting_weight_kg. Synced so the reset propagates across
+-- devices. Nullable = never reset.
+alter table public.exercises
+  add column if not exists progression_reset_at timestamptz;
+-- Columns removed when the progression refactor landed; drop them if a
+-- pre-refactor Supabase project still has them, otherwise they'd be dead
+-- weight the client never reads or writes.
 alter table public.exercises
   drop column if exists progression_strategy;
+alter table public.exercises
+  drop column if exists progression_priority;
 
 -- ---------------------------- workout_templates ----------------------------
 create table if not exists public.workout_templates (
