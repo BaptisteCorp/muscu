@@ -11,9 +11,9 @@ class UserSettingsTable extends Table {
   BoolColumn get useRirInsteadOfRpe =>
       boolean().withDefault(const Constant(false))();
   RealColumn get userBodyweightKg => real().nullable()();
-  TextColumn get themeMode => text().withDefault(const Constant('system'))();
+  TextColumn get themeMode => text().withDefault(const Constant('dark'))();
   // Accent colour palette. Device-local (not synced to the cloud).
-  TextColumn get palette => text().withDefault(const Constant('crimson'))();
+  TextColumn get palette => text().withDefault(const Constant('ocean'))();
   // Last local edit time, for last-write-wins sync. Null = never edited
   // (the default singleton) → loses every LWW comparison, so a fresh-install
   // default never overwrites real cloud settings on a push-before-pull sync.

@@ -1,0 +1,13 @@
+# Copie ce fichier en `android/key.properties` (NON versionné) et remplis-le
+# avec ton upload keystore. Génère le keystore une seule fois avec :
+#
+#   keytool -genkey -v -keystore ~/reps-upload.jks \
+#     -keyalg RSA -keysize 2048 -validity 10000 -alias upload
+#
+# Puis active Play App Signing à la 1re publication (Google gère la clé finale,
+# tu ne fournis que la clé d'upload). NE PERDS PAS ce keystore.
+storePassword=changeme
+keyPassword=changeme
+keyAlias=upload
+# Chemin ABSOLU vers le .jks (ou relatif à android/app).
+storeFile=/home/bapt/reps-upload.jks

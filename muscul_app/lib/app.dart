@@ -134,15 +134,14 @@ class _MusculAppState extends ConsumerState<MusculApp>
     ref.watch(bodyweightSettingsSyncProvider);
     final mode = settingsAsync.maybeWhen(
       data: (s) => switch (s.themeMode) {
-        AppThemeMode.system => ThemeMode.system,
         AppThemeMode.light => ThemeMode.light,
         AppThemeMode.dark => ThemeMode.dark,
       },
-      orElse: () => ThemeMode.system,
+      orElse: () => ThemeMode.dark,
     );
     final palette = settingsAsync.maybeWhen(
       data: (s) => s.palette,
-      orElse: () => AppPalette.crimson,
+      orElse: () => AppPalette.ocean,
     );
 
     // Trigger a sync as soon as we transition into a logged-in state. This

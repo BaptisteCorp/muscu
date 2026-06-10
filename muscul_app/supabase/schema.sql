@@ -150,8 +150,8 @@ create table if not exists public.user_settings (
   default_rest_seconds integer not null default 120,
   use_rir_instead_of_rpe boolean not null default false,
   user_bodyweight_kg double precision,
-  theme_mode text not null default 'system',
-  palette text not null default 'crimson',
+  theme_mode text not null default 'dark',
+  palette text not null default 'ocean',
   updated_at timestamptz not null default now(),
   primary key (user_id)
 );
@@ -252,6 +252,26 @@ create index if not exists set_entries_user_idx
   on public.set_entries (user_id, session_exercise_id);
 create index if not exists bodyweight_user_idx
   on public.bodyweight_entries (user_id, date);
+
+-- ===========================================================================
+-- Suppression de compte (exigence Play Store + droit à l'effacement RGPD).
+-- Le client (clé anon/authenticated) ne peut pas supprimer sa propre ligne
+-- auth.users → on expose une fonction SECURITY DEFINER. Supprimer l'utilisateur
+-- auth fait cascader la suppression sur toutes les tables qui référencent
+-- auth.users(id) ON DELETE CASCADE (donc toutes ses données).
+-- ===========================================================================
+create or replace function public.delete_current_user()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  delete from auth.users where id = auth.uid();
+end;
+$$;
+revoke all on function public.delete_current_user() from public, anon;
+grant execute on function public.delete_current_user() to authenticated;
 
 -- ===========================================================================
 -- Force PostgREST to reload its schema cache. Without this, columns added

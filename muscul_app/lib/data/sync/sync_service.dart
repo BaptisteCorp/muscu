@@ -368,7 +368,7 @@ class SyncService {
                 Value((m['use_rir_instead_of_rpe'] as bool?) ?? false),
             userBodyweightKg:
                 Value((m['user_bodyweight_kg'] as num?)?.toDouble()),
-            themeMode: Value((m['theme_mode'] as String?) ?? 'system'),
+            themeMode: Value((m['theme_mode'] as String?) ?? 'dark'),
             palette: Value((m['palette'] as String?) ?? 'crimson'),
             updatedAt: Value(cloudUpdated),
           ),

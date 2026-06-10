@@ -15,8 +15,8 @@ class UserSettings {
     this.defaultRestSeconds = 120,
     this.useRirInsteadOfRpe = false,
     this.userBodyweightKg,
-    this.themeMode = AppThemeMode.system,
-    this.palette = AppPalette.crimson,
+    this.themeMode = AppThemeMode.dark,
+    this.palette = AppPalette.ocean,
   });
 
   UserSettings copyWith({

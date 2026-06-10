@@ -12,6 +12,7 @@ import '../../domain/models/bodyweight_entry.dart';
 import '../../domain/models/enums.dart';
 import '../../domain/models/session.dart';
 import '../../domain/models/workout_template.dart';
+import '../legal/privacy_policy_screen.dart';
 import '../session/start_session_controller.dart';
 
 class HomeScreen extends ConsumerWidget {
@@ -509,8 +510,6 @@ class _SettingsSheet extends ConsumerWidget {
             SegmentedButton<AppThemeMode>(
               segments: const [
                 ButtonSegment(
-                    value: AppThemeMode.system, label: Text('Système')),
-                ButtonSegment(
                     value: AppThemeMode.light, label: Text('Clair')),
                 ButtonSegment(
                     value: AppThemeMode.dark, label: Text('Sombre')),
@@ -551,6 +550,18 @@ class _SettingsSheet extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: 8),
+            const Divider(height: 24),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.privacy_tip_outlined),
+              title: const Text('Confidentialité'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context, rootNavigator: true).push(
+                MaterialPageRoute(
+                  builder: (_) => const PrivacyPolicyScreen(),
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -711,9 +722,64 @@ void _showLoggedInSheet(
               icon: const Icon(Icons.logout_rounded),
               label: const Text('Se déconnecter'),
             ),
+            const SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: () => _confirmDeleteAccount(sctx, ref),
+              icon: Icon(Icons.delete_forever_rounded,
+                  color: Theme.of(sctx).colorScheme.error),
+              label: Text(
+                'Supprimer mon compte',
+                style: TextStyle(color: Theme.of(sctx).colorScheme.error),
+              ),
+            ),
           ],
         ),
       ),
     ),
   );
+}
+
+/// Confirmation + suppression définitive : compte cloud (RPC cascade) puis
+/// données locales. Exigé par le Play Store / RGPD.
+Future<void> _confirmDeleteAccount(BuildContext sheetCtx, WidgetRef ref) async {
+  final ok = await showDialog<bool>(
+    context: sheetCtx,
+    builder: (dialogCtx) => AlertDialog(
+      title: const Text('Supprimer mon compte ?'),
+      content: const Text(
+          'Action définitive : ton compte et toutes tes données (séances, '
+          'modèles, exercices, poids) seront effacés du serveur et de cet '
+          'appareil. Cette opération est irréversible.'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogCtx, false),
+          child: const Text('Annuler'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: Theme.of(dialogCtx).colorScheme.error,
+          ),
+          onPressed: () => Navigator.pop(dialogCtx, true),
+          child: const Text('Supprimer'),
+        ),
+      ],
+    ),
+  );
+  if (ok != true) return;
+  // On capture le messenger avant de fermer le sheet (le sheet démonté ne peut
+  // plus en fournir un).
+  final messenger = ScaffoldMessenger.of(sheetCtx);
+  if (sheetCtx.mounted) Navigator.pop(sheetCtx);
+  try {
+    // Cloud d'abord : si ça échoue, on NE touche PAS au local.
+    await ref.read(authServiceProvider).deleteAccount();
+    await ref.read(databaseProvider).wipeUserData();
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Compte supprimé.')),
+    );
+  } catch (e) {
+    messenger.showSnackBar(
+      SnackBar(content: Text('Échec de la suppression : $e')),
+    );
+  }
 }

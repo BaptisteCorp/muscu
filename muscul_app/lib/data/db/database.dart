@@ -33,8 +33,32 @@ class AppDatabase extends _$AppDatabase {
 
   AppDatabase.forTesting(QueryExecutor e) : super(e);
 
+  /// Efface toutes les données PERSONNELLES locales (séances, modèles, exos
+  /// custom, poids de corps) et réinitialise les réglages. Conserve les
+  /// exercices seed (définitions, non personnelles). Appelé après une
+  /// suppression de compte pour ne laisser aucune trace locale.
+  Future<void> wipeUserData() async {
+    await transaction(() async {
+      await delete(setEntries).go();
+      await delete(sessionExercises).go();
+      await delete(workoutSessions).go();
+      await delete(templateExerciseSets).go();
+      await delete(workoutTemplateExercises).go();
+      await delete(workoutTemplates).go();
+      await delete(bodyweightEntries).go();
+      // Exos créés par l'utilisateur ; les seed (is_custom=false) restent.
+      await (delete(exercises)..where((t) => t.isCustom.equals(true))).go();
+      // Réglages → valeurs d'usine (singleton id=1).
+      await delete(userSettingsTable).go();
+      await into(userSettingsTable).insert(
+        UserSettingsTableCompanion.insert(id: const Value(1)),
+        mode: InsertMode.insertOrReplace,
+      );
+    });
+  }
+
   @override
-  int get schemaVersion => 14;
+  int get schemaVersion => 15;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -163,6 +187,17 @@ class AppDatabase extends _$AppDatabase {
                 '(SELECT ws.started_at FROM workout_sessions ws '
                 'WHERE ws.id = session_exercises.session_id), 0) '
                 'WHERE updated_at IS NULL;');
+          }
+          if (from < 15) {
+            // Mode « système » retiré → les réglages encore dessus passent en
+            // sombre. Et le défaut de palette passe de rouge (crimson) à bleu
+            // (ocean) : on bascule celles restées sur l'ancien défaut.
+            await customStatement(
+                "UPDATE user_settings SET theme_mode = 'dark' "
+                "WHERE theme_mode = 'system';");
+            await customStatement(
+                "UPDATE user_settings SET palette = 'ocean' "
+                "WHERE palette = 'crimson';");
           }
         },
         onCreate: (m) async {

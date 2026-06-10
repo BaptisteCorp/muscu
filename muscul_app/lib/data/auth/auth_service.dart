@@ -45,6 +45,18 @@ class AuthService {
   Future<void> sendPasswordReset(String email) async {
     await _client.auth.resetPasswordForEmail(email);
   }
+
+  /// Supprime DÉFINITIVEMENT le compte courant et, par cascade côté Postgres
+  /// (FK `on delete cascade` vers auth.users), toutes ses données cloud — puis
+  /// déconnecte. Le client ne pouvant pas supprimer sa propre ligne auth, on
+  /// appelle la fonction SECURITY DEFINER `delete_current_user`
+  /// (cf. supabase/schema.sql). Le nettoyage de la base LOCALE est fait par
+  /// l'appelant (AppDatabase.wipeUserData).
+  Future<void> deleteAccount() async {
+    if (!SupabaseConfig.isConfigured) return;
+    await _client.rpc('delete_current_user');
+    await _client.auth.signOut();
+  }
 }
 
 final authServiceProvider = Provider<AuthService>((ref) => AuthService());

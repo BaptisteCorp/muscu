@@ -44,11 +44,13 @@ extension EquipmentLabel on Equipment {
 
 enum WeightUnit { kg, lb }
 
-enum AppThemeMode { system, light, dark }
+// Mode clair / sombre uniquement. Le mode « système » a été retiré (il
+// dupliquait le sombre dans la pratique) — défaut = sombre.
+enum AppThemeMode { light, dark }
 
-/// Accent colour palette for the app theme. [crimson] is the original
-/// red/amber/lime look (default); the others reskin the accent colours while
-/// keeping the surface design. Stored as a device-local preference.
+/// Accent colour palette for the app theme. [ocean] (bleu) est le défaut ;
+/// [crimson] (rouge) et les autres restent disponibles en variation. Stored
+/// as a device-local preference.
 enum AppPalette { crimson, ocean, emerald, violet, amber }
 
 enum SyncStatus { pending, synced, conflict }

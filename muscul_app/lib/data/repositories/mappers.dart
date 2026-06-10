@@ -241,8 +241,9 @@ UserSettings settingsFromRow(UserSettingsRow row) => UserSettings(
       defaultRestSeconds: row.defaultRestSeconds,
       useRirInsteadOfRpe: row.useRirInsteadOfRpe,
       userBodyweightKg: row.userBodyweightKg,
+      // Ancien 'system' (ou valeur inconnue) → sombre.
       themeMode: enumByName(AppThemeMode.values, row.themeMode,
-          fallback: AppThemeMode.system),
+          fallback: AppThemeMode.dark),
       palette: enumByName(AppPalette.values, row.palette,
-          fallback: AppPalette.crimson),
+          fallback: AppPalette.ocean),
     );
