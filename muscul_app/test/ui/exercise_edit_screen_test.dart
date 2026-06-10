@@ -8,11 +8,49 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reps/data/db/database.dart';
 import 'package:reps/data/repositories/exercise_repository.dart';
+import 'package:reps/data/repositories/template_repository.dart';
 import 'package:reps/domain/models/enums.dart';
 import 'package:reps/domain/models/exercise.dart';
+import 'package:reps/domain/models/workout_template.dart';
 
 import '_harness.dart';
 import 'template_edit_screen_test.dart' show pushAndSettle, systemBack;
+
+/// Seeds a template that references [exerciseId] with one planned set.
+/// Returns the template_exercise id (to read its planned sets back).
+Future<String> seedTemplateUsing(AppDatabase db, String exerciseId,
+    {int plannedReps = 10}) async {
+  final repo = LocalTemplateRepository(db);
+  const teId = 'te-x';
+  await repo.upsertTemplate(WorkoutTemplate(
+    id: 'tmpl-1',
+    name: 'Push',
+    createdAt: DateTime(2026, 1, 1),
+    updatedAt: DateTime(2026, 1, 1),
+  ));
+  await repo.setTemplateExercises('tmpl-1', [
+    TemplateExerciseWithSets(
+      exercise: WorkoutTemplateExercise(
+        id: teId,
+        templateId: 'tmpl-1',
+        exerciseId: exerciseId,
+        orderIndex: 0,
+        targetSets: 1,
+        restSeconds: 90,
+      ),
+      sets: [
+        TemplateExerciseSet(
+          id: '$teId-s0',
+          templateExerciseId: teId,
+          setIndex: 0,
+          plannedReps: plannedReps,
+          plannedWeightKg: 40,
+        ),
+      ],
+    ),
+  ]);
+  return teId;
+}
 
 Future<String> seedCustomExercise(AppDatabase db) async {
   final repo = LocalExerciseRepository(db);
@@ -25,7 +63,6 @@ Future<String> seedCustomExercise(AppDatabase db) async {
     secondaryMuscles: const [MuscleGroup.triceps],
     equipment: Equipment.barbell,
     isCustom: true,
-    progressionPriority: ProgressionPriority.repsFirst,
     targetRepRangeMin: 6,
     targetRepRangeMax: 10,
     startingWeightKg: 50,
@@ -291,7 +328,7 @@ void main() {
 
   group('ExerciseEditScreen — default (seeded) exercises', () {
     testWidgets(
-      'identity-readonly banner shown for default exercise',
+      'default exercise is fully editable: rename persists, no lock banner',
       (tester) async {
         final h = await buildHarness();
         addTearDown(h.dispose);
@@ -300,7 +337,14 @@ void main() {
         await pumpHarness(tester, h);
         await pushAndSettle(tester, h, '/exercise/${seeded.id}');
 
-        expect(find.text('Exercice par défaut'), findsOneWidget);
+        // Plus de verrou : le bandeau a disparu et le nom est éditable.
+        expect(find.text('Exercice par défaut'), findsNothing);
+        await tester.enterText(fieldByLabel('Nom'), 'Mon exo renommé');
+        await tester.pumpAndSettle();
+        await systemBack(tester);
+
+        final after = await readById(h.db, seeded.id);
+        expect(after.name, 'Mon exo renommé');
       },
     );
 
@@ -320,6 +364,104 @@ void main() {
 
         final after = await readById(h.db, seeded.id);
         expect(after.defaultRestSeconds, 75);
+      },
+    );
+  });
+
+  group('ExerciseEditScreen — avertissement exercice utilisé', () {
+    testWidgets(
+      'changement matériel d\'un exo utilisé → dialogue, confirmer enregistre',
+      (tester) async {
+        final h = await buildHarness();
+        addTearDown(h.dispose);
+        final id = await seedCustomExercise(h.db);
+        await seedTemplateUsing(h.db, id);
+        await pumpHarness(tester, h);
+        await pushAndSettle(tester, h, '/exercise/$id');
+
+        await tester.enterText(fieldByLabel('Nom'), 'Renommé');
+        await tester.pumpAndSettle();
+        await tester.tap(find.byIcon(Icons.check));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Modifier un exercice utilisé ?'), findsOneWidget);
+        await tester.tap(find.widgetWithText(FilledButton, 'Enregistrer'));
+        await tester.pumpAndSettle();
+
+        final after = await readById(h.db, id);
+        expect(after.name, 'Renommé');
+      },
+    );
+
+    testWidgets(
+      'annuler le dialogue → reste sur l\'écran, pas de sauvegarde',
+      (tester) async {
+        final h = await buildHarness();
+        addTearDown(h.dispose);
+        final id = await seedCustomExercise(h.db);
+        await seedTemplateUsing(h.db, id);
+        await pumpHarness(tester, h);
+        await pushAndSettle(tester, h, '/exercise/$id');
+
+        await tester.enterText(fieldByLabel('Nom'), 'Renommé');
+        await tester.pumpAndSettle();
+        await tester.tap(find.byIcon(Icons.check));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.widgetWithText(TextButton, 'Annuler'));
+        await tester.pumpAndSettle();
+
+        // Toujours sur l'écran d'édition.
+        expect(find.text('Exercice'), findsOneWidget);
+        final after = await readById(h.db, id);
+        expect(after.name, 'Mon développé', reason: 'pas enregistré');
+      },
+    );
+
+    testWidgets(
+      'changement non matériel (repos) sur exo utilisé → pas de dialogue',
+      (tester) async {
+        final h = await buildHarness();
+        addTearDown(h.dispose);
+        final id = await seedCustomExercise(h.db);
+        await seedTemplateUsing(h.db, id);
+        await pumpHarness(tester, h);
+        await pushAndSettle(tester, h, '/exercise/$id');
+
+        await tester.enterText(fieldByLabel('Repos par défaut (s)'), '90');
+        await tester.pumpAndSettle();
+        await tester.tap(find.byIcon(Icons.check));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Modifier un exercice utilisé ?'), findsNothing);
+        final after = await readById(h.db, id);
+        expect(after.defaultRestSeconds, 90);
+      },
+    );
+
+    testWidgets(
+      'changer la fourchette borne les reps planifiées du modèle',
+      (tester) async {
+        final h = await buildHarness();
+        addTearDown(h.dispose);
+        final id = await seedCustomExercise(h.db); // range 6-10
+        final teId = await seedTemplateUsing(h.db, id, plannedReps: 10);
+        await pumpHarness(tester, h);
+        await pushAndSettle(tester, h, '/exercise/$id');
+
+        // Nouvelle fourchette 12-15 → 10 < 12 → planned reps doivent passer à 12.
+        await tester.enterText(fieldByLabel('Reps min'), '12');
+        await tester.enterText(fieldByLabel('Reps max'), '15');
+        await tester.pumpAndSettle();
+        await tester.tap(find.byIcon(Icons.check));
+        await tester.pumpAndSettle();
+        // Confirme l'avertissement (exo utilisé + changement matériel).
+        await tester.tap(find.widgetWithText(FilledButton, 'Enregistrer'));
+        await tester.pumpAndSettle();
+
+        final sets =
+            await LocalTemplateRepository(h.db).getTemplateExerciseSets(teId);
+        expect(sets.single.plannedReps, 12);
       },
     );
   });

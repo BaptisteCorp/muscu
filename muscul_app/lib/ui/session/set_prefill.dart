@@ -18,18 +18,33 @@ import 'pending_set.dart';
 ///   3. sinon (toute première séance, aucun historique) → on amorce depuis le
 ///      template s'il existe (reps/poids de départ voulus) ;
 ///   4. sinon (freestyle) → le [target].
+///
+/// Cas particulier [replayPerSet] (surcharge progressive désactivée) : on
+/// REJOUE la dernière séance série par série au lieu d'appliquer un seul
+/// objectif à toutes les séries. Sinon une séance 12/11/9 ressortirait en
+/// 9/9/9 (le moteur réduit l'historique à la pire série). On garde le poids
+/// du [target] (0 au poids du corps, charge de travail sinon) et on rejoue
+/// uniquement les reps de chaque série.
 PendingSet computeSetDefault({
   required int pos,
   required List<SetEntry> sessionSets,
   required bool hasHistory,
   required List<TemplateExerciseSet> plan,
   required ProgressionTarget target,
+  bool replayPerSet = false,
+  List<SetEntry> previousWorkingSets = const [],
 }) {
   final validatedThisSession =
       sessionSets.where((s) => !s.isWarmup).toList(growable: false);
   if (validatedThisSession.isNotEmpty) {
     final last = validatedThisSession.last;
     return PendingSet(reps: last.reps, weight: last.weightKg, rpe: null);
+  }
+  if (replayPerSet && previousWorkingSets.isNotEmpty) {
+    final src = pos < previousWorkingSets.length
+        ? previousWorkingSets[pos]
+        : previousWorkingSets.last;
+    return PendingSet(reps: src.reps, weight: target.targetWeightKg, rpe: null);
   }
   if (hasHistory) {
     return PendingSet(

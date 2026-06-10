@@ -433,6 +433,12 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
             // uses internally. Below that, target is just the starting weight.
             final hasHistory =
                 pastHistory.any((h) => h.sets.any((s) => !s.isWarmup));
+            // Surcharge désactivée → on rejoue la dernière séance série par
+            // série. On prend les séries de travail de la séance la plus
+            // récente, ordonnées par index.
+            final previousWorkingSets = !exercise.progressiveOverloadEnabled
+                ? _mostRecentWorkingSets(pastHistory)
+                : const <SetEntry>[];
             return _exerciseBody(
               items: items,
               index: index,
@@ -440,12 +446,27 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
               exercise: exercise,
               target: target,
               hasHistory: hasHistory,
+              replayPerSet: !exercise.progressiveOverloadEnabled,
+              previousWorkingSets: previousWorkingSets,
               settings: settings,
             );
           },
         );
       },
     );
+  }
+
+  /// Working (non-warm-up) sets of the most recent past session that has any,
+  /// ordered by set index. Used to replay a session set-by-set when
+  /// progressive overload is disabled.
+  static List<SetEntry> _mostRecentWorkingSets(
+      List<SessionExerciseWithSets> pastHistory) {
+    for (final h in pastHistory) {
+      final working = h.sets.where((s) => !s.isWarmup).toList()
+        ..sort((a, b) => a.setIndex.compareTo(b.setIndex));
+      if (working.isNotEmpty) return working;
+    }
+    return const [];
   }
 
   Widget _exerciseBody({
@@ -455,6 +476,8 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
     required Exercise exercise,
     required ProgressionTarget target,
     required bool hasHistory,
+    required bool replayPerSet,
+    required List<SetEntry> previousWorkingSets,
     required UserSettings settings,
   }) {
     final plan = _planByExercise[item.sessionExercise.exerciseId] ?? const [];
@@ -467,6 +490,8 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
           hasHistory: hasHistory,
           plan: plan,
           target: target,
+          replayPerSet: replayPerSet,
+          previousWorkingSets: previousWorkingSets,
         );
 
     /// Returns the (possibly user-edited) values for a given set position.
@@ -561,6 +586,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
           await _validateSet(
             item, p, settings, plannedCount,
             setPos: activePos,
+            useBodyweight: exercise.useBodyweight,
             restSeconds: item.sessionExercise.restSeconds ??
                 exercise.effectiveRestSeconds(settings.defaultRestSeconds),
           );
@@ -771,7 +797,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
 
   Future<void> _validateSet(SessionExerciseWithSets item, PendingSet p,
       UserSettings settings, int targetSets,
-      {required int setPos, int? restSeconds}) async {
+      {required int setPos, required bool useBodyweight, int? restSeconds}) async {
     final restElapsed =
         _restCtrl.captureAndStart(restSeconds ?? settings.defaultRestSeconds);
     HapticFeedback.lightImpact();
@@ -809,6 +835,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen>
             exerciseId: item.sessionExercise.exerciseId,
             reps: entry.reps,
             weightKg: entry.weightKg,
+            useBodyweight: useBodyweight,
           );
       svc.pushTemplate(templateId).ignore();
     }

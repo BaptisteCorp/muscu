@@ -6,12 +6,12 @@ import 'package:reps/domain/models/session.dart';
 import 'package:reps/domain/models/user_settings.dart';
 import 'package:reps/domain/models/workout_template.dart';
 import 'package:reps/domain/progression/progression_engine.dart';
+import 'package:reps/ui/session/pending_set.dart';
 import 'package:reps/ui/session/set_prefill.dart';
 
 const _settings = UserSettings();
 
 Exercise _exercise({
-  ProgressionPriority priority = ProgressionPriority.repsFirst,
   int min = 8,
   int max = 12,
   double startingWeight = 44,
@@ -26,7 +26,6 @@ Exercise _exercise({
     equipment: Equipment.barbell,
     isCustom: false,
     progressiveOverloadEnabled: true,
-    progressionPriority: priority,
     minimumRpeThreshold: null,
     targetRepRangeMin: min,
     targetRepRangeMax: max,
@@ -118,9 +117,8 @@ void main() {
       expect(prefill.weight, 46, reason: 'poids doit monter d\'un incrément');
     });
 
-    test('weight-first : 3×8@44 réussi → série 0 pré-remplie à 8 reps @ 46kg',
-        () {
-      final exercise = _exercise(priority: ProgressionPriority.weightFirst);
+    test('reps-first : 3×8@44 réussi → série 0 pré-remplie à 9 reps @ 44kg', () {
+      final exercise = _exercise();
       final history = [
         _pastSession([
           _set(idx: 0, reps: 8, weight: 44),
@@ -143,8 +141,66 @@ void main() {
         plan: plan,
         target: target,
       );
-      expect(prefill.reps, 8);
-      expect(prefill.weight, 46);
+      expect(prefill.reps, 9, reason: '+1 rep (double progression)');
+      expect(prefill.weight, 44);
+    });
+  });
+
+  group('computeSetDefault — replay par série (surcharge désactivée)', () {
+    // Bug : tractions 12/11/9 sans surcharge ressortaient en 9/9/9 (le moteur
+    // réduit l'historique à la pire série). Avec replayPerSet on rejoue chaque
+    // série telle quelle.
+    const target = ProgressionTarget(
+      targetSets: 3,
+      targetReps: 9, // ce que le moteur collapse (pire série)
+      targetWeightKg: 0,
+      reason: 'peu importe',
+    );
+    final previous = [
+      _set(idx: 0, reps: 12, weight: 0),
+      _set(idx: 1, reps: 11, weight: 0),
+      _set(idx: 2, reps: 9, weight: 0),
+    ];
+
+    test('chaque série rejoue ses propres reps (12/11/9, pas 9/9/9)', () {
+      PendingSet at(int pos) => computeSetDefault(
+            pos: pos,
+            sessionSets: const [],
+            hasHistory: true,
+            plan: const [],
+            target: target,
+            replayPerSet: true,
+            previousWorkingSets: previous,
+          );
+      expect(at(0).reps, 12);
+      expect(at(1).reps, 11);
+      expect(at(2).reps, 9);
+    });
+
+    test('série au-delà de l\'historique → reprend la dernière', () {
+      final p = computeSetDefault(
+        pos: 5,
+        sessionSets: const [],
+        hasHistory: true,
+        plan: const [],
+        target: target,
+        replayPerSet: true,
+        previousWorkingSets: previous,
+      );
+      expect(p.reps, 9, reason: 'dernière série de l\'historique');
+    });
+
+    test('poids du replay = poids du target (0 au poids du corps)', () {
+      final p = computeSetDefault(
+        pos: 0,
+        sessionSets: const [],
+        hasHistory: true,
+        plan: const [],
+        target: target,
+        replayPerSet: true,
+        previousWorkingSets: previous,
+      );
+      expect(p.weight, 0);
     });
   });
 

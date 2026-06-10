@@ -42,8 +42,6 @@ extension EquipmentLabel on Equipment {
   }
 }
 
-enum ProgressionPriority { repsFirst, weightFirst }
-
 enum WeightUnit { kg, lb }
 
 enum AppThemeMode { system, light, dark }

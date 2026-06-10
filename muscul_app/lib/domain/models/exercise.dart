@@ -16,9 +16,6 @@ class Exercise {
   /// dernières valeurs (poids + reps).
   final bool progressiveOverloadEnabled;
 
-  /// Ordre d'application : monter les reps d'abord, ou la charge d'abord.
-  final ProgressionPriority progressionPriority;
-
   /// RPE maximum autorisé pour valider une progression (incl.). Si la séance
   /// précédente a dépassé ce seuil, on ne progresse pas. `null` = pas de
   /// contrainte RPE. Les sets sans RPE renseigné sont considérés validés.
@@ -51,7 +48,6 @@ class Exercise {
     required this.startingWeightKg,
     required this.updatedAt,
     this.progressiveOverloadEnabled = true,
-    this.progressionPriority = ProgressionPriority.repsFirst,
     this.minimumRpeThreshold,
     this.useBodyweight = false,
     this.defaultIncrementKg,
@@ -76,7 +72,6 @@ class Exercise {
     int? defaultRestSeconds,
     bool clearDefaultRestSeconds = false,
     bool? progressiveOverloadEnabled,
-    ProgressionPriority? progressionPriority,
     int? minimumRpeThreshold,
     bool clearMinimumRpeThreshold = false,
     int? targetRepRangeMin,
@@ -112,7 +107,6 @@ class Exercise {
           : (defaultRestSeconds ?? this.defaultRestSeconds),
       progressiveOverloadEnabled:
           progressiveOverloadEnabled ?? this.progressiveOverloadEnabled,
-      progressionPriority: progressionPriority ?? this.progressionPriority,
       minimumRpeThreshold: clearMinimumRpeThreshold
           ? null
           : (minimumRpeThreshold ?? this.minimumRpeThreshold),

@@ -13,8 +13,6 @@ class Exercises extends Table {
   IntColumn get defaultRestSeconds => integer().nullable()();
   BoolColumn get progressiveOverloadEnabled =>
       boolean().withDefault(const Constant(true))();
-  TextColumn get progressionPriority =>
-      text().withDefault(const Constant('repsFirst'))();
   IntColumn get minimumRpeThreshold => integer().nullable()();
   IntColumn get targetRepRangeMin => integer().withDefault(const Constant(8))();
   IntColumn get targetRepRangeMax => integer().withDefault(const Constant(12))();

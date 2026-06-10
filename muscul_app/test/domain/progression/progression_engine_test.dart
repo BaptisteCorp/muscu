@@ -9,7 +9,6 @@ const _settings = UserSettings();
 
 Exercise _exercise({
   bool overloadEnabled = true,
-  ProgressionPriority priority = ProgressionPriority.repsFirst,
   int? rpeThreshold,
   int min = 8,
   int max = 10,
@@ -26,7 +25,6 @@ Exercise _exercise({
     equipment: Equipment.barbell,
     isCustom: false,
     progressiveOverloadEnabled: overloadEnabled,
-    progressionPriority: priority,
     minimumRpeThreshold: rpeThreshold,
     targetRepRangeMin: min,
     targetRepRangeMax: max,
@@ -163,50 +161,6 @@ void main() {
     });
   });
 
-  group('WEIGHT_FIRST', () {
-    test('3x8 @44kg réussi → 3x8 @46kg', () {
-      final ex = _exercise(priority: ProgressionPriority.weightFirst);
-      final history = [
-        _session([
-          _set(idx: 0, reps: 8, weight: 44),
-          _set(idx: 1, reps: 8, weight: 44),
-          _set(idx: 2, reps: 8, weight: 44),
-        ]),
-      ];
-      final t = ProgressionEngine.computeNextTarget(
-        exercise: ex,
-        plannedSets: 3,
-        history: history,
-        settings: _settings,
-      );
-      expect(t.targetReps, 8);
-      expect(t.targetWeightKg, 46);
-    });
-
-    test('reps au-dessus du max sont clampées', () {
-      final ex = _exercise(
-        priority: ProgressionPriority.weightFirst,
-        min: 8,
-        max: 10,
-      );
-      final history = [
-        _session([
-          _set(idx: 0, reps: 12, weight: 44),
-          _set(idx: 1, reps: 12, weight: 44),
-          _set(idx: 2, reps: 12, weight: 44),
-        ]),
-      ];
-      final t = ProgressionEngine.computeNextTarget(
-        exercise: ex,
-        plannedSets: 3,
-        history: history,
-        settings: _settings,
-      );
-      expect(t.targetReps, 10, reason: 'clamp à repMax');
-      expect(t.targetWeightKg, 46);
-    });
-  });
-
   group('Surcharge progressive désactivée', () {
     test('reproduit exactement les dernières valeurs', () {
       final ex = _exercise(overloadEnabled: false);
@@ -226,28 +180,6 @@ void main() {
       expect(t.targetReps, 10);
       expect(t.targetWeightKg, 44);
       expect(t.reason, contains('désactivée'));
-    });
-
-    test('s\'applique aussi en mode WEIGHT_FIRST', () {
-      final ex = _exercise(
-        overloadEnabled: false,
-        priority: ProgressionPriority.weightFirst,
-      );
-      final history = [
-        _session([
-          _set(idx: 0, reps: 8, weight: 44, rpe: 7),
-          _set(idx: 1, reps: 8, weight: 44, rpe: 7),
-          _set(idx: 2, reps: 8, weight: 44, rpe: 7),
-        ]),
-      ];
-      final t = ProgressionEngine.computeNextTarget(
-        exercise: ex,
-        plannedSets: 3,
-        history: history,
-        settings: _settings,
-      );
-      expect(t.targetReps, 8);
-      expect(t.targetWeightKg, 44);
     });
   });
 
@@ -348,7 +280,12 @@ void main() {
   });
 
   group('Validation séries/reps', () {
-    test('reps en dessous du min → pas de progression', () {
+    test('reps sous le min (charge trop lourde) → recalibrage e1RM plus léger',
+        () {
+      // Fourchette 8-10. 8,7,6 @44 : a tenu 8 sur la 1re série puis a coulé sous
+      // le plancher → la charge est trop lourde pour le volume. On ne réimpose
+      // pas 44 : on recale via e1RM vers le HAUT de fourchette (plus léger, plus
+      // de reps). e1RM moyen ≈ 54,3 → 10 reps ≈ 40.
       final ex = _exercise();
       final history = [
         _session([
@@ -363,8 +300,9 @@ void main() {
         history: history,
         settings: _settings,
       );
-      expect(t.targetReps, 8, reason: 'clamp à repMin pour rejouer');
-      expect(t.targetWeightKg, 44);
+      expect(t.targetWeightKg, 40, reason: 'recalibré plus léger');
+      expect(t.targetReps, 10, reason: 'haut de fourchette');
+      expect(t.reason, contains('recale'));
     });
 
     test('moins de séries que prévu → pas de progression', () {
@@ -445,11 +383,7 @@ void main() {
 
   group('Garde anti-fatigue (chute de reps intra-séance)', () {
     test('8→6 reps (25%) à charge constante → progresse (fatigue normale)', () {
-      final ex = _exercise(
-        priority: ProgressionPriority.weightFirst,
-        min: 6,
-        max: 10,
-      );
+      final ex = _exercise(min: 6, max: 10);
       final history = [
         _session([
           _set(idx: 0, reps: 8, weight: 120),
@@ -463,18 +397,16 @@ void main() {
         history: history,
         settings: _settings,
       );
-      // 25% < 40% → fatigue normale, on progresse.
-      expect(t.targetWeightKg, 122);
+      // 25% < 40% → fatigue normale, on progresse : +1 rep depuis la pire série
+      // (6) à charge constante (double progression).
+      expect(t.targetWeightKg, 120);
+      expect(t.targetReps, 7);
     });
 
     test('effondrement 10→5 reps (50%) → pas de progression', () {
       // minReps (5) est au-dessus du plancher (5) — c'est la garde drop-off,
       // pas la garde repMin, qui doit attraper ce cas.
-      final ex = _exercise(
-        priority: ProgressionPriority.weightFirst,
-        min: 5,
-        max: 12,
-      );
+      final ex = _exercise(min: 5, max: 12);
       final history = [
         _session([
           _set(idx: 0, reps: 10, weight: 120),
@@ -494,15 +426,12 @@ void main() {
     });
 
     test(
-        'séance loggée réelle : [110x9, 120x8, 120x6, 100x8] → progresse à 122kg',
+        'séance loggée réelle : [110x9, 120x8, 120x6, 100x8] → +1 rep depuis 120',
         () {
       // Mode = 120 (ramp 110 et back-off 100 ignorés). Chute 8→6 = 25% < 40%
-      // → fatigue normale, on progresse depuis la charge de travail (120).
-      final ex = _exercise(
-        priority: ProgressionPriority.weightFirst,
-        min: 6,
-        max: 10,
-      );
+      // → fatigue normale. Plancher 6 atteint → double progression : +1 rep à
+      // charge constante (120), depuis la pire série à 120 (6 → 7).
+      final ex = _exercise(min: 6, max: 10);
       final history = [
         _session([
           _set(idx: 0, reps: 9, weight: 110),
@@ -517,9 +446,9 @@ void main() {
         history: history,
         settings: _settings,
       );
-      expect(t.targetWeightKg, 122,
+      expect(t.targetWeightKg, 120,
           reason: 'progresse depuis 120, pas depuis 100/110');
-      expect(t.targetReps, 6, reason: 'pire série à 120kg');
+      expect(t.targetReps, 7, reason: '+1 depuis la pire série à 120kg (6)');
     });
   });
 
@@ -527,12 +456,8 @@ void main() {
     test('back-off léger n\'écrase pas la baseline reps', () {
       // 120x8, 120x8, puis back-off 100x5. Sans le filtre charge-de-travail,
       // le 100x5 ferait croire à un échec (min reps = 5). Avec le filtre,
-      // seules les séries à 120 comptent → 8 reps propres → progression.
-      final ex = _exercise(
-        priority: ProgressionPriority.weightFirst,
-        min: 6,
-        max: 10,
-      );
+      // seules les séries à 120 comptent → 8 reps propres → +1 rep.
+      final ex = _exercise(min: 6, max: 10);
       final history = [
         _session([
           _set(idx: 0, reps: 8, weight: 120),
@@ -546,30 +471,22 @@ void main() {
         history: history,
         settings: _settings,
       );
-      expect(t.targetWeightKg, 122, reason: '120 propre → +incrément');
-      expect(t.targetReps, 8);
+      expect(t.targetWeightKg, 120, reason: '120 propre → +1 rep (pas le 100x5)');
+      expect(t.targetReps, 9);
     });
   });
 
-  group('Deload sur stall (2 échecs consécutifs au même poids)', () {
-    test('2 séances échouées à 120kg → deload à 108kg au max de reps', () {
-      final ex = _exercise(
-        priority: ProgressionPriority.weightFirst,
-        min: 6,
-        max: 10,
-        overrideIncrement: 2.0,
-      );
+  group('Fourchette de reps modifiée dans l\'exercice', () {
+    test('range élargie (8-12 → 12-20) : 12 reps ne reset PAS à 8', () {
+      // Le bug réel était un provider en cache ; côté moteur, avec la nouvelle
+      // range, 12 reps (anciennement le max) ne doit plus déclencher le reset.
+      final ex = _exercise(min: 12, max: 20);
       final history = [
         _session([
-          _set(idx: 0, reps: 5, weight: 120),
-          _set(idx: 1, reps: 5, weight: 120),
-          _set(idx: 2, reps: 5, weight: 120),
-        ], id: 'fail2'),
-        _session([
-          _set(idx: 0, reps: 5, weight: 120),
-          _set(idx: 1, reps: 5, weight: 120),
-          _set(idx: 2, reps: 5, weight: 120),
-        ], id: 'fail1'),
+          _set(idx: 0, reps: 12, weight: 40),
+          _set(idx: 1, reps: 12, weight: 40),
+          _set(idx: 2, reps: 12, weight: 40),
+        ]),
       ];
       final t = ProgressionEngine.computeNextTarget(
         exercise: ex,
@@ -577,17 +494,91 @@ void main() {
         history: history,
         settings: _settings,
       );
-      expect(t.targetWeightKg, 108, reason: '120 * 0.9 = 108');
-      expect(t.targetReps, 10, reason: 'haut de fourchette = volume');
-      expect(t.reason, contains('deload'));
+      expect(t.targetReps, 13, reason: '+1 dans la nouvelle fourchette');
+      expect(t.targetWeightKg, 40, reason: 'pas de reset/montée de charge');
     });
 
-    test('1 seul échec → pas de deload, on tient le poids', () {
-      final ex = _exercise(
-        priority: ProgressionPriority.weightFirst,
-        min: 6,
-        max: 10,
+    test('plancher relevé au-dessus du dernier perf → recalibrage vers la '
+        'nouvelle fourchette', () {
+      // Range relevée à 12-20 alors que la dernière séance était 3×10 @40.
+      // 10 < nouveau plancher 12 → charge trop lourde pour la nouvelle cible.
+      // On recale vers le haut (20 reps) : e1RM ≈ 53,3 → 20 reps ≈ 32.
+      final ex = _exercise(min: 12, max: 20);
+      final history = [
+        _session([
+          _set(idx: 0, reps: 10, weight: 40),
+          _set(idx: 1, reps: 10, weight: 40),
+          _set(idx: 2, reps: 10, weight: 40),
+        ]),
+      ];
+      final t = ProgressionEngine.computeNextTarget(
+        exercise: ex,
+        plannedSets: 3,
+        history: history,
+        settings: _settings,
       );
+      expect(t.targetWeightKg, 32, reason: 'recalibré pour tenir la fourchette');
+      expect(t.targetReps, 20);
+      expect(t.reason, contains('recale'));
+    });
+  });
+
+  group('Recalibrage e1RM (charge trop lourde pour le volume)', () {
+    test('scénario pecs réel [110x9,120x8,120x6,100x8] plancher 8 → recale '
+        'plus léger avec plus de reps (~102kg × 12)', () {
+      // Le cas qui a motivé la feature : a tenu 8 sur la 1re série à 120 puis a
+      // coulé à 6. Plancher 8 → 6 < 8. Au lieu de redemander 4×8 @120 (qu'on
+      // sait intenable), on estime via Epley la charge tenable pour le HAUT de
+      // fourchette (12 reps) depuis la PIRE série à 120 (6 reps → e1RM 144) ≈ 102.
+      final ex = _exercise(min: 8, max: 12, overrideIncrement: 2.0);
+      final history = [
+        _session([
+          _set(idx: 0, reps: 9, weight: 110),
+          _set(idx: 1, reps: 8, weight: 120),
+          _set(idx: 2, reps: 6, weight: 120),
+          _set(idx: 3, reps: 8, weight: 100),
+        ]),
+      ];
+      final t = ProgressionEngine.computeNextTarget(
+        exercise: ex,
+        plannedSets: 4,
+        history: history,
+        settings: _settings,
+      );
+      expect(t.targetWeightKg, 102, reason: 'charge tenable pour 12 reps');
+      expect(t.targetReps, 12, reason: 'haut de fourchette');
+      expect(t.reason, contains('recale'));
+    });
+
+    test('curl haut-de-fourchette [14,14,11 @25] plancher 12 → ~20kg × 20 '
+        '(tenable, pas 22,5 surestimé)', () {
+      // Haut-rep (préacher curl) : a fini à 11 < plancher 12. La PIRE série
+      // (11@25 → e1RM 34,2) cadre la charge tenable pour 20 reps sur toutes les
+      // séries : ≈ 20 kg. (La moyenne aurait donné 22,5, trop lourd vu la chute
+      // 14→11 et la surestimation d'Epley à 20 reps.)
+      final ex = _exercise(min: 12, max: 20, overrideIncrement: 2.5);
+      final history = [
+        _session([
+          _set(idx: 0, reps: 14, weight: 25),
+          _set(idx: 1, reps: 14, weight: 25),
+          _set(idx: 2, reps: 11, weight: 25),
+        ]),
+      ];
+      final t = ProgressionEngine.computeNextTarget(
+        exercise: ex,
+        plannedSets: 3,
+        history: history,
+        settings: _settings,
+      );
+      expect(t.targetWeightKg, 20, reason: 'cadré sur la pire série (11@25)');
+      expect(t.targetReps, 20, reason: 'haut de fourchette');
+      expect(t.reason, contains('recale'));
+    });
+
+    test('recale dès le 1er échec (pas d\'attente de 2 séances)', () {
+      // Différence clé avec l'ancien deload : on n'impose pas de re-grinder le
+      // poids une séance de plus, on recale immédiatement.
+      final ex = _exercise(min: 6, max: 10, overrideIncrement: 2.0);
       final history = [
         _session([
           _set(idx: 0, reps: 5, weight: 120),
@@ -601,32 +592,48 @@ void main() {
         history: history,
         settings: _settings,
       );
-      expect(t.targetWeightKg, 120);
-      expect(t.reason, isNot(contains('deload')));
+      expect(t.targetWeightKg, lessThan(120));
+      expect(t.reason, contains('recale'));
     });
 
-    test('un succès entre deux échecs casse le compteur (pas de deload)', () {
-      final ex = _exercise(
-        priority: ProgressionPriority.weightFirst,
-        min: 6,
-        max: 10,
-      );
+    test('le poids recalibré "tient" : une fois travaillé avec succès, le '
+        'ratchet ne rebondit pas vers le pic échoué', () {
+      // Séance la plus récente : 4×8 @116 réussi (le poids recalibré). Avant :
+      // 8,6 @120 échoué. Le ratchet doit ancrer sur 116 (pic 120 abandonné),
+      // donc progresser DEPUIS 116 (double progression : +1 rep), pas
+      // re-proposer 120.
+      final ex = _exercise(min: 8, max: 12, overrideIncrement: 2.0);
       final history = [
         _session([
-          _set(idx: 0, reps: 5, weight: 120),
-          _set(idx: 1, reps: 5, weight: 120),
-          _set(idx: 2, reps: 5, weight: 120),
-        ], id: 'fail-recent'),
+          _set(idx: 0, reps: 8, weight: 116),
+          _set(idx: 1, reps: 8, weight: 116),
+          _set(idx: 2, reps: 8, weight: 116),
+          _set(idx: 3, reps: 8, weight: 116),
+        ], id: 'recal-success'),
         _session([
           _set(idx: 0, reps: 8, weight: 120),
-          _set(idx: 1, reps: 8, weight: 120),
-          _set(idx: 2, reps: 8, weight: 120),
-        ], id: 'success'),
+          _set(idx: 1, reps: 6, weight: 120),
+        ], id: 'failed-peak'),
+      ];
+      final t = ProgressionEngine.computeNextTarget(
+        exercise: ex,
+        plannedSets: 4,
+        history: history,
+        settings: _settings,
+      );
+      expect(t.targetWeightKg, 116, reason: 'ancré sur 116, pas 120');
+      expect(t.targetReps, 9, reason: '+1 rep depuis 116 (8→9)');
+    });
+
+    test('recale vers le haut de fourchette (plus léger, plus de reps)', () {
+      // 5,5,5 @120, fourchette 6-10. e1RM moyen = 140 → 10 reps ≈ 106.
+      final ex = _exercise(min: 6, max: 10, overrideIncrement: 2.0);
+      final history = [
         _session([
           _set(idx: 0, reps: 5, weight: 120),
           _set(idx: 1, reps: 5, weight: 120),
           _set(idx: 2, reps: 5, weight: 120),
-        ], id: 'fail-old'),
+        ]),
       ];
       final t = ProgressionEngine.computeNextTarget(
         exercise: ex,
@@ -634,29 +641,35 @@ void main() {
         history: history,
         settings: _settings,
       );
-      expect(t.targetWeightKg, 120, reason: 'compteur cassé par le succès');
-      expect(t.reason, isNot(contains('deload')));
+      expect(t.targetWeightKg, lessThan(120), reason: 'plus léger');
+      expect(t.targetReps, 10, reason: 'haut de fourchette');
+      expect(t.reason, contains('recale'));
     });
+  });
 
-    test('deux échecs à des poids différents → pas de deload', () {
-      // Échec à 120 puis échec à 117.5 : ce n'est pas le MÊME poids, donc pas
-      // un stall sur une charge donnée.
+  group('Deload sur stall (échecs hors plancher de reps : RPE)', () {
+    // Le recalibrage e1RM gère les échecs « reps sous le plancher ». Le deload
+    // forfaitaire reste le filet pour les autres stalls (ici : RPE trop haut
+    // alors que les reps sont dans la fourchette — pas de signal de charge
+    // exploitable, on recule de 10%).
+    test('2 séances RPE trop haut à 120kg → deload à 108kg au max de reps', () {
       final ex = _exercise(
-        priority: ProgressionPriority.weightFirst,
         min: 6,
         max: 10,
+        rpeThreshold: 9,
+        overrideIncrement: 2.0,
       );
       final history = [
         _session([
-          _set(idx: 0, reps: 5, weight: 117.5),
-          _set(idx: 1, reps: 5, weight: 117.5),
-          _set(idx: 2, reps: 5, weight: 117.5),
-        ], id: 'fail-117'),
+          _set(idx: 0, reps: 8, weight: 120, rpe: 10),
+          _set(idx: 1, reps: 8, weight: 120, rpe: 10),
+          _set(idx: 2, reps: 8, weight: 120, rpe: 10),
+        ], id: 'fail2'),
         _session([
-          _set(idx: 0, reps: 5, weight: 120),
-          _set(idx: 1, reps: 5, weight: 120),
-          _set(idx: 2, reps: 5, weight: 120),
-        ], id: 'fail-120'),
+          _set(idx: 0, reps: 8, weight: 120, rpe: 10),
+          _set(idx: 1, reps: 8, weight: 120, rpe: 10),
+          _set(idx: 2, reps: 8, weight: 120, rpe: 10),
+        ], id: 'fail1'),
       ];
       final t = ProgressionEngine.computeNextTarget(
         exercise: ex,
@@ -664,8 +677,31 @@ void main() {
         history: history,
         settings: _settings,
       );
-      // Ancre = 120 (le plus lourd), mais la séance la plus récente est à
-      // 117.5 → la série d'échecs au poids d'ancrage s'arrête à 0.
+      expect(t.targetWeightKg, 108, reason: '120 * 0.9 = 108');
+      expect(t.targetReps, 10, reason: 'haut de fourchette = volume');
+      expect(t.reason, contains('deload'));
+    });
+
+    test('1 seul échec RPE → pas de deload, on tient le poids', () {
+      final ex = _exercise(
+        min: 6,
+        max: 10,
+        rpeThreshold: 9,
+      );
+      final history = [
+        _session([
+          _set(idx: 0, reps: 8, weight: 120, rpe: 10),
+          _set(idx: 1, reps: 8, weight: 120, rpe: 10),
+          _set(idx: 2, reps: 8, weight: 120, rpe: 10),
+        ]),
+      ];
+      final t = ProgressionEngine.computeNextTarget(
+        exercise: ex,
+        plannedSets: 3,
+        history: history,
+        settings: _settings,
+      );
+      expect(t.targetWeightKg, 120);
       expect(t.reason, isNot(contains('deload')));
     });
   });
@@ -683,10 +719,9 @@ void main() {
       expect(t.targetReps, 8);
     });
 
-    test('séance validée → +1 rep, poids reste 0 (même mode weightFirst)', () {
+    test('séance validée → +1 rep, poids reste 0', () {
       final ex = _exercise(
         useBodyweight: true,
-        priority: ProgressionPriority.weightFirst,
         startingWeight: 20,
         min: 8,
         max: 12,
@@ -704,7 +739,7 @@ void main() {
         history: history,
         settings: _settings,
       );
-      expect(t.targetWeightKg, 0, reason: 'weightFirst ne doit PAS ajouter de poids');
+      expect(t.targetWeightKg, 0, reason: 'bodyweight ne doit PAS ajouter de poids');
       expect(t.targetReps, 11, reason: '+1 rep');
     });
 
@@ -860,14 +895,13 @@ void main() {
         history: history,
         settings: _settings,
       );
-      // Anchor on 44kg/9 → progress to 10×44kg (repsFirst, max=10).
+      // Anchor on 44kg/9 → progress to 10×44kg (+1 rep, max=10).
       expect(t.targetWeightKg, 44);
       expect(t.targetReps, 10);
     });
 
-    test(
-        'reps inférieures aux reps min sur séance lourde → pas de progression, '
-        'mais on garde le poids lourd', () {
+    test('reps sous le min sur séance lourde → recalibrage plus léger '
+        '(plus de re-grind du poids intenable)', () {
       final ex = _exercise();
       final history = [
         _session([
@@ -882,10 +916,11 @@ void main() {
         history: history,
         settings: _settings,
       );
-      // Failed reps (6 < 8) → no progression. Weight stays at 44, reps
-      // clamp back to repMin (8).
-      expect(t.targetWeightKg, 44);
-      expect(t.targetReps, 8);
+      // 6 < 8 → charge trop lourde. On recale vers le haut de fourchette :
+      // e1RM 52,8 → 10 reps ≈ 40.
+      expect(t.targetWeightKg, 40, reason: 'recalibré plus léger');
+      expect(t.targetReps, 10);
+      expect(t.reason, contains('recale'));
     });
 
     test('deload prolongé (5+ séances légères) finit par baisser la baseline',

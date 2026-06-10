@@ -121,8 +121,6 @@ class SyncService {
                   Value(m['default_rest_seconds'] as int?),
               progressiveOverloadEnabled: Value(
                   (m['progressive_overload_enabled'] as bool?) ?? true),
-              progressionPriority: Value(
-                  (m['progression_priority'] as String?) ?? 'repsFirst'),
               minimumRpeThreshold:
                   Value(m['minimum_rpe_threshold'] as int?),
               targetRepRangeMin: Value(m['target_rep_range_min'] as int? ?? 8),
@@ -398,9 +396,12 @@ class SyncService {
   }
 
   Future<void> _pushExercises(String uid, SyncReport report) async {
-    // Skip seeded (is_custom = false) — same for everyone.
+    // On pousse les exos custom + tout exo par défaut que l'utilisateur a édité
+    // (syncStatus != 'synced'). Les seeds non touchés (is_custom=false,
+    // syncStatus='synced') restent exclus — identiques pour tout le monde.
     final rows = await (_db.select(_db.exercises)
-          ..where((t) => t.isCustom.equals(true)))
+          ..where((t) =>
+              t.isCustom.equals(true) | t.syncStatus.equals('synced').not()))
         .get();
     if (rows.isEmpty) return;
     final payload = rows
@@ -416,7 +417,6 @@ class SyncService {
               'default_increment_kg': r.defaultIncrementKg,
               'default_rest_seconds': r.defaultRestSeconds,
               'progressive_overload_enabled': r.progressiveOverloadEnabled,
-              'progression_priority': r.progressionPriority,
               'minimum_rpe_threshold': r.minimumRpeThreshold,
               'target_rep_range_min': r.targetRepRangeMin,
               'target_rep_range_max': r.targetRepRangeMax,
@@ -713,16 +713,16 @@ class SyncService {
   /// Push a single exercise row to the cloud immediately. Same rationale
   /// as pushTemplate: don't wait for the periodic batched sync — a fresh
   /// custom exercise can be lost if the user reinstalls or the app dies
-  /// before the next sync window. Default seeded exercises (is_custom=false)
-  /// are skipped because they're identical for every user and never go
-  /// to the cloud.
+  /// before the next sync window. Appelé uniquement après une édition/suppression
+  /// explicite, donc on pousse aussi les exos par défaut édités (un seed jamais
+  /// touché ne passe jamais par ici).
   Future<void> pushExercise(String exerciseId) async {
     if (!isAvailable) return;
     final uid = _userId!;
     final row = await (_db.select(_db.exercises)
           ..where((t) => t.id.equals(exerciseId)))
         .getSingleOrNull();
-    if (row == null || !row.isCustom) return;
+    if (row == null) return;
     await _sb.from('exercises').upsert({
       'id': row.id,
       'user_id': uid,
@@ -735,7 +735,6 @@ class SyncService {
       'default_increment_kg': row.defaultIncrementKg,
       'default_rest_seconds': row.defaultRestSeconds,
       'progressive_overload_enabled': row.progressiveOverloadEnabled,
-      'progression_priority': row.progressionPriority,
       'minimum_rpe_threshold': row.minimumRpeThreshold,
       'target_rep_range_min': row.targetRepRangeMin,
       'target_rep_range_max': row.targetRepRangeMax,

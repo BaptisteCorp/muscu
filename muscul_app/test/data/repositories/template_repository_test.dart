@@ -87,4 +87,134 @@ void main() {
     final detail = await repo.getWithExercises('t1');
     expect(detail!.exercises, isEmpty);
   });
+
+  group('applyValidatedSet — ratchet', () {
+    test('weighted : poids inférieur ne fait PAS reculer le plan', () async {
+      await seedTemplate([te('te-a', 'ex-a', 0)]); // plan 10 reps @ 40kg
+      await repo.applyValidatedSet(
+        templateId: 't1',
+        exerciseId: 'ex-a',
+        reps: 12,
+        weightKg: 30, // plus léger → ne doit pas écraser
+      );
+      final sets = await repo.getTemplateExerciseSets('te-a');
+      expect(sets.first.plannedReps, 10, reason: 'ratchet up only');
+      expect(sets.first.plannedWeightKg, 40);
+    });
+
+    test(
+        'poids du corps : plannedWeightKg résiduel (20) ne bloque PAS la montée '
+        'des reps', () async {
+      await seedTemplate([te('te-a', 'ex-a', 0)]); // plan 10 reps @ 40kg (sale)
+      // Séance au poids du corps : 12 reps, poids 0. Sans le fix, 0 > 40 = faux
+      // → le plan resterait figé. Avec useBodyweight on compare les reps seules.
+      await repo.applyValidatedSet(
+        templateId: 't1',
+        exerciseId: 'ex-a',
+        reps: 12,
+        weightKg: 0,
+        useBodyweight: true,
+      );
+      final sets = await repo.getTemplateExerciseSets('te-a');
+      expect(sets.first.plannedReps, 12, reason: 'le plan suit les reps');
+      expect(sets.first.plannedWeightKg, isNull,
+          reason: 'poids planifié nettoyé au poids du corps');
+    });
+
+    test('poids du corps : reps inférieures ne font PAS reculer le plan',
+        () async {
+      await seedTemplate([te('te-a', 'ex-a', 0)]); // plan 10 reps
+      await repo.applyValidatedSet(
+        templateId: 't1',
+        exerciseId: 'ex-a',
+        reps: 8,
+        weightKg: 0,
+        useBodyweight: true,
+      );
+      final sets = await repo.getTemplateExerciseSets('te-a');
+      expect(sets.first.plannedReps, 10, reason: 'ratchet up only sur les reps');
+    });
+  });
+
+  group('countTemplatesUsingExercise', () {
+    test('compte les modèles distincts non supprimés référençant l\'exo',
+        () async {
+      await seedTemplate([te('te-a', 'ex-a', 0), te('te-b', 'ex-b', 1)]);
+      // Second modèle utilisant aussi ex-a.
+      await repo.upsertTemplate(WorkoutTemplate(
+        id: 't2',
+        name: 'Push B',
+        createdAt: DateTime(2026, 1, 1),
+        updatedAt: DateTime(2026, 1, 1),
+      ));
+      await repo.setTemplateExercises('t2', [
+        TemplateExerciseWithSets(
+          exercise: const WorkoutTemplateExercise(
+            id: 'te-a2',
+            templateId: 't2',
+            exerciseId: 'ex-a',
+            orderIndex: 0,
+            targetSets: 3,
+            restSeconds: 90,
+          ),
+          sets: const [
+            TemplateExerciseSet(
+              id: 'te-a2-s0',
+              templateExerciseId: 'te-a2',
+              setIndex: 0,
+              plannedReps: 10,
+              plannedWeightKg: 40,
+            ),
+          ],
+        ),
+      ]);
+
+      expect(await repo.countTemplatesUsingExercise('ex-a'), 2);
+      expect(await repo.countTemplatesUsingExercise('ex-b'), 1);
+      expect(await repo.countTemplatesUsingExercise('ex-x'), 0);
+    });
+
+    test('ignore les modèles supprimés', () async {
+      await seedTemplate([te('te-a', 'ex-a', 0)]);
+      expect(await repo.countTemplatesUsingExercise('ex-a'), 1);
+      await repo.softDelete('t1');
+      expect(await repo.countTemplatesUsingExercise('ex-a'), 0);
+    });
+  });
+
+  group('clampPlannedRepsForExercise', () {
+    Future<DateTime> templateUpdatedAt() async {
+      final row = await (db.select(db.workoutTemplates)
+            ..where((t) => t.id.equals('t1')))
+          .getSingle();
+      return row.updatedAt;
+    }
+
+    test('borne les reps planifiées au-dessus du plafond', () async {
+      await seedTemplate([te('te-a', 'ex-a', 0)]); // plannedReps 10
+      await repo.clampPlannedRepsForExercise(exerciseId: 'ex-a', min: 6, max: 8);
+      final sets = await repo.getTemplateExerciseSets('te-a');
+      expect(sets.every((s) => s.plannedReps == 8), isTrue);
+      expect((await templateUpdatedAt()).isAfter(DateTime(2026, 1, 1)), isTrue,
+          reason: 'modèle bumpé pour la sync');
+    });
+
+    test('borne les reps planifiées sous le plancher', () async {
+      await seedTemplate([te('te-a', 'ex-a', 0)]); // plannedReps 10
+      await repo.clampPlannedRepsForExercise(
+          exerciseId: 'ex-a', min: 12, max: 15);
+      final sets = await repo.getTemplateExerciseSets('te-a');
+      expect(sets.every((s) => s.plannedReps == 12), isTrue);
+    });
+
+    test('reps déjà dans la plage → inchangé, pas de bump', () async {
+      await seedTemplate([te('te-a', 'ex-a', 0)]); // plannedReps 10
+      await repo.clampPlannedRepsForExercise(
+          exerciseId: 'ex-a', min: 8, max: 12);
+      final sets = await repo.getTemplateExerciseSets('te-a');
+      expect(sets.every((s) => s.plannedReps == 10), isTrue);
+      expect(await templateUpdatedAt(), DateTime(2026, 1, 1),
+          reason: 'aucune série hors plage → pas de bump');
+    });
+  });
 }

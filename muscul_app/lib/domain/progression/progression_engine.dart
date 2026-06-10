@@ -1,5 +1,4 @@
 import '../../core/utils/formatters.dart';
-import '../models/enums.dart';
 import '../models/exercise.dart';
 import '../models/progression_target.dart';
 import '../models/session.dart';
@@ -25,17 +24,22 @@ import '../models/user_settings.dart';
 ///      à la charge de travail (le poids "mode"). Les séries plus légères de
 ///      la même séance — montée en charge (ramp) ou back-off après un échec —
 ///      ne comptent ni pour ni contre la progression.
-///   4. Selon `progressionPriority` :
-///        - REPS_FIRST : on monte les reps jusqu'au max, puis +incrément kg
-///          et retour au min de reps.
-///        - WEIGHT_FIRST : on monte le poids à chaque succès en gardant les
-///          reps identiques (clampées dans la fourchette).
-///   5. Deload : si l'athlète échoue la validation `_deloadStallThreshold`
-///      séances de suite au même poids de travail, on recule de
-///      `_deloadFactor` (charge allégée, reps au max) pour accumuler du
-///      volume et repartir plus fort. Ceci court-circuite le ratchet "up
-///      only" — c'est le seul cas où le moteur baisse volontairement la
-///      charge cible. Le poids changeant, le compteur d'échecs repart de zéro.
+///   4. Double progression (l'unique modèle, celui utilisé partout) : on monte
+///      les reps jusqu'au haut de la fourchette, puis +incrément kg et retour
+///      au plancher de reps.
+///   5. Recalibrage e1RM : si l'échec vient du fait que les reps sont tombées
+///      SOUS le plancher de la fourchette à la charge de travail (la charge
+///      est trop lourde pour tenir la fourchette sur toutes les séries), on ne
+///      réimpose pas le même poids — on estime via Epley une charge tenable à
+///      partir de la perf réelle (1RM estimé de la série la PLUS FATIGUÉE, pour
+///      que la charge tienne sur toutes les séries) et on la prescrit
+///      (cf. `_recalibratedWeight`). C'est le cas "j'ai fait 8 puis 6 à 120,
+///      inutile de me redemander 4×8 à 120".
+///   6. Deload : si l'échec persiste pour une autre raison (séries
+///      incomplètes, RPE, effondrement de reps) `_deloadStallThreshold`
+///      séances de suite au même poids, on recule de `_deloadFactor` (charge
+///      allégée, reps au max) pour accumuler du volume. Le poids changeant, le
+///      compteur d'échecs repart de zéro.
 ///
 /// [history] est trié par séance la plus récente en premier.
 class ProgressionEngine {
@@ -67,7 +71,7 @@ class ProgressionEngine {
     // dropped from 44 to 40kg because they were tired) does NOT pull the
     // baseline down. The user keeps the higher anchor and retries it next
     // session.
-    final lastWithWork = _ratchetAnchor(history);
+    final lastWithWork = _ratchetAnchor(history, repMin: repMin);
 
     if (lastWithWork == null) {
       return ProgressionTarget(
@@ -119,10 +123,37 @@ class ProgressionEngine {
       workingWeightKg: lastWeight,
       plannedSets: plannedSets,
       repMin: repMin,
+      repMax: repMax,
       rpeThreshold: exercise.minimumRpeThreshold,
     );
 
     if (!validation.passed) {
+      // Charge trop lourde pour TENIR le plancher de reps sur toutes les séries
+      // → recalibrage e1RM plutôt que de réimposer un poids qu'on sait
+      // intenable. On vise le haut de la fourchette (plus léger, plus de reps),
+      // cohérent avec la double progression : on accumule du volume à charge
+      // gérable, puis on remonte les reps puis le poids. Si le calcul ne propose
+      // pas une charge plus légère, on retombe sur la logique hold / deload.
+      if (validation.kind == _FailKind.repsBelowRange) {
+        final recalReps = repMax;
+        final recalWeight = _recalibratedWeight(
+          workingWeightSets: workingWeightSets,
+          currentWeight: lastWeight,
+          targetReps: recalReps,
+          increment: increment,
+        );
+        if (recalWeight != null) {
+          return ProgressionTarget(
+            targetSets: plannedSets,
+            targetReps: recalReps,
+            targetWeightKg: recalWeight,
+            reason: 'Trop lourd pour tenir $recalReps reps sur toutes les '
+                'séries à ${fmtKg(lastWeight)}kg — on recale à '
+                '${fmtKg(recalWeight)}kg (estimé d\'après ta perf) pour '
+                'valider toutes les séries, puis on remonte',
+          );
+        }
+      }
       // Stall → deload. Si l'athlète a échoué le poids de travail plusieurs
       // séances d'affilée, le grinder encore est contre-productif : on recule
       // de ~10% et on vise le haut de la fourchette pour accumuler du volume
@@ -132,6 +163,7 @@ class ProgressionEngine {
         weight: lastWeight,
         plannedSets: plannedSets,
         repMin: repMin,
+        repMax: repMax,
         rpeThreshold: exercise.minimumRpeThreshold,
       );
       if (failures >= _deloadStallThreshold) {
@@ -153,32 +185,24 @@ class ProgressionEngine {
       );
     }
 
-    switch (exercise.progressionPriority) {
-      case ProgressionPriority.repsFirst:
-        if (lastTopReps >= repMax) {
-          return ProgressionTarget(
-            targetSets: plannedSets,
-            targetReps: repMin,
-            targetWeightKg: lastWeight + increment,
-            reason:
-                '$ratchetNote+${fmtKg(increment)}kg, retour à $repMin reps',
-          );
-        }
-        final nextReps = (lastTopReps + 1).clamp(repMin, repMax);
-        return ProgressionTarget(
-          targetSets: plannedSets,
-          targetReps: nextReps,
-          targetWeightKg: lastWeight,
-          reason: '$ratchetNote+1 rep, on monte vers $repMax',
-        );
-      case ProgressionPriority.weightFirst:
-        return ProgressionTarget(
-          targetSets: plannedSets,
-          targetReps: lastTopReps.clamp(repMin, repMax),
-          targetWeightKg: lastWeight + increment,
-          reason: '$ratchetNote+${fmtKg(increment)}kg',
-        );
+    // Double progression : tant qu'on n'est pas au plafond de reps, on monte
+    // d'une rep ; une fois le plafond atteint, +incrément kg et retour au
+    // plancher de reps.
+    if (lastTopReps >= repMax) {
+      return ProgressionTarget(
+        targetSets: plannedSets,
+        targetReps: repMin,
+        targetWeightKg: lastWeight + increment,
+        reason: '$ratchetNote+${fmtKg(increment)}kg, retour à $repMin reps',
+      );
     }
+    final nextReps = (lastTopReps + 1).clamp(repMin, repMax);
+    return ProgressionTarget(
+      targetSets: plannedSets,
+      targetReps: nextReps,
+      targetWeightKg: lastWeight,
+      reason: '$ratchetNote+1 rep, on monte vers $repMax',
+    );
   }
 
   /// Cible "poids du corps" : surcharge par les reps uniquement, poids = 0.
@@ -258,7 +282,9 @@ class ProgressionEngine {
       return 'Séries de travail incomplètes — on garde le même objectif de reps';
     }
     if (worstReps < repMin) {
-      return 'Vise $repMin reps sur chaque série avant d\'en ajouter';
+      // Au poids du corps il n'y a pas de plafond : on ne référence que le
+      // plancher (si tu l'as changé dans l'exercice, la cible suit).
+      return 'On vise au moins $repMin reps par série avant d\'en ajouter';
     }
     final bestReps = working.map((s) => s.reps).reduce((a, b) => a > b ? a : b);
     if (bestReps > 0 &&
@@ -312,25 +338,55 @@ class ProgressionEngine {
   /// eventually wins — once the user has been training lighter for ~5
   /// sessions in a row, the old peak falls out of the window and the
   /// anchor follows them down.
+  ///
+  /// EXCEPTION « pic abandonné » : si la séance la plus lourde a raté le
+  /// plancher de reps ([_failedRepFloor]) ET qu'une séance PLUS RÉCENTE existe
+  /// à une charge strictement plus légère, ce pic est considéré comme
+  /// délibérément abandonné (l'athlète est descendu après l'avoir échoué, p.ex.
+  /// suite à un recalibrage e1RM) — on l'exclut et on cherche l'ancre parmi les
+  /// charges restantes. Sans ça, le pic raté resterait l'ancre pendant ~5
+  /// séances et bloquerait la progression sur la charge plus légère effectivement
+  /// travaillée. Un pic RÉUSSI plus lourd, lui, reste l'ancre (on retente la
+  /// charge même après un jour « léger » : c'est le ratchet up-only d'origine).
   static SessionExerciseWithSets? _ratchetAnchor(
-      List<SessionExerciseWithSets> history) {
+    List<SessionExerciseWithSets> history, {
+    required int repMin,
+  }) {
     const window = 5;
-    double maxWeight = -1;
-    for (final s in history.take(window)) {
-      final working =
-          s.sets.where((set) => !set.isWarmup).toList(growable: false);
-      if (working.isEmpty) continue;
-      final w = _modeWeight(working);
-      if (w > maxWeight) maxWeight = w;
+    final sessions = history
+        .take(window)
+        .where((s) => s.sets.any((set) => !set.isWarmup))
+        .toList(growable: false);
+    if (sessions.isEmpty) return null;
+
+    final excluded = <double>{};
+    while (true) {
+      double maxWeight = -1;
+      for (final s in sessions) {
+        final w = _modeWeight(
+            s.sets.where((set) => !set.isWarmup).toList(growable: false));
+        if (excluded.contains(w)) continue;
+        if (w > maxWeight) maxWeight = w;
+      }
+      if (maxWeight < 0) return null;
+
+      // Indice (most-recent-first) de la séance la plus récente à maxWeight.
+      final anchorIdx = sessions.indexWhere((s) =>
+          _modeWeight(
+              s.sets.where((set) => !set.isWarmup).toList(growable: false)) ==
+          maxWeight);
+      final anchor = sessions[anchorIdx];
+
+      final supersededByLighter = sessions.take(anchorIdx).any((s) =>
+          _modeWeight(
+              s.sets.where((set) => !set.isWarmup).toList(growable: false)) <
+          maxWeight);
+      if (_failedRepFloor(anchor, repMin) && supersededByLighter) {
+        excluded.add(maxWeight);
+        continue;
+      }
+      return anchor;
     }
-    if (maxWeight < 0) return null;
-    for (final s in history.take(window)) {
-      final working =
-          s.sets.where((set) => !set.isWarmup).toList(growable: false);
-      if (working.isEmpty) continue;
-      if (_modeWeight(working) == maxWeight) return s;
-    }
-    return null;
   }
 
   /// Mode (poids le plus utilisé). En cas d'égalité on prend le plus lourd.
@@ -373,6 +429,77 @@ class ProgressionEngine {
     return w;
   }
 
+  /// 1RM estimé (formule d'Epley) : `1RM = poids × (1 + reps/30)`.
+  ///
+  /// Fiable sur ~1-10 reps ; au-delà elle surestime légèrement la force, mais
+  /// nos fourchettes de travail restent dans cette plage. Elle nous sert à
+  /// comparer la difficulté de séries faites à des couples (poids, reps)
+  /// différents et à en déduire une charge cible.
+  static double _epley1RM(double weightKg, int reps) =>
+      weightKg * (1 + reps / 30.0);
+
+  /// Charge théorique permettant [reps] répétitions pour un 1RM estimé
+  /// [e1rm] (Epley inversé), arrondie à l'incrément de la barre.
+  static double _loadForReps(double e1rm, int reps, double increment) {
+    final inc = increment > 0 ? increment : 1.0;
+    final raw = e1rm / (1 + reps / 30.0);
+    return (raw / inc).round() * inc;
+  }
+
+  /// Recalibrage e1RM : quand la charge de travail est trop lourde pour tenir
+  /// la fourchette de reps sur TOUTES les séries prévues, on ne réimpose pas
+  /// bêtement le même poids (l'athlète sait déjà qu'il échouera) — on estime
+  /// un poids réellement tenable à partir de sa perf.
+  ///
+  /// On part du 1RM estimé de la série la PLUS FATIGUÉE à la charge de travail
+  /// (e1RM le plus bas), puis on en déduit la charge permettant [targetReps]
+  /// reps. Utiliser la pire série — et non la moyenne — rend la charge tenable
+  /// sur TOUTES les séries, y compris la dernière : la fatigue intra-séance fait
+  /// chuter les reps set après set, donc viser la moyenne laisserait les
+  /// dernières séries sous la cible (surtout en haut de fourchette où Epley
+  /// surestime déjà la charge tenable). C'est l'application directe de deux
+  /// résultats :
+  ///   * pour l'hypertrophie la charge est flexible — on peut aller plus léger
+  ///     et faire plus de reps sans perdre en stimulus tant qu'on pousse près
+  ///     de l'échec ;
+  ///   * on baisse la charge dès qu'on ne tient plus la fourchette cible.
+  ///
+  /// Retourne null si aucune série exploitable ou si le calcul ne propose pas
+  /// une charge strictement plus légère — dans ce cas on laisse la logique
+  /// hold / deload classique reprendre la main.
+  static double? _recalibratedWeight({
+    required List<SetEntry> workingWeightSets,
+    required double currentWeight,
+    required int targetReps,
+    required double increment,
+  }) {
+    if (workingWeightSets.isEmpty) return null;
+    final minE1rm = workingWeightSets
+        .map((s) => _epley1RM(s.weightKg, s.reps))
+        .reduce((a, b) => a < b ? a : b);
+    var w = _loadForReps(minE1rm, targetReps, increment);
+    // Pas plus léger que la charge actuelle → ce n'est pas un vrai problème de
+    // charge (fatigue, mauvais jour) : on laisse hold / deload décider.
+    if (w >= currentWeight) return null;
+    final inc = increment > 0 ? increment : 1.0;
+    if (w < inc) w = inc; // jamais sous un incrément (charge plancher plausible)
+    return w;
+  }
+
+  /// Vrai si, à la charge de travail (mode) de [session], l'athlète n'a pas
+  /// atteint le plancher de reps sur toutes ses séries — i.e. la séance a raté
+  /// le plancher de la fourchette. Sert à l'ancrage : un pic de charge raté de
+  /// la sorte peut être « abandonné » au profit d'une séance plus légère.
+  static bool _failedRepFloor(SessionExerciseWithSets session, int repMin) {
+    final working =
+        session.sets.where((s) => !s.isWarmup).toList(growable: false);
+    if (working.isEmpty) return false;
+    final mode = _modeWeight(working);
+    final atWeight = working.where((s) => s.weightKg == mode);
+    final minReps = atWeight.map((s) => s.reps).reduce((a, b) => a < b ? a : b);
+    return minReps < repMin;
+  }
+
   /// Nombre de séances les plus récentes, CONSÉCUTIVES, dont le poids de
   /// travail (mode) vaut [weight] et qui ont échoué la validation. S'arrête au
   /// premier succès ou au premier poids de travail différent (un recul
@@ -382,6 +509,7 @@ class ProgressionEngine {
     required double weight,
     required int plannedSets,
     required int repMin,
+    required int repMax,
     required int? rpeThreshold,
   }) {
     var count = 0;
@@ -399,6 +527,7 @@ class ProgressionEngine {
         workingWeightKg: weight,
         plannedSets: plannedSets,
         repMin: repMin,
+        repMax: repMax,
         rpeThreshold: rpeThreshold,
       ).passed;
       if (passed) break;
@@ -426,23 +555,30 @@ class ProgressionEngine {
     required double workingWeightKg,
     required int plannedSets,
     required int repMin,
+    required int repMax,
     required int? rpeThreshold,
   }) {
     // Volume : on compte TOUTES les séries de travail (ramp/back-off inclus) —
     // une montée en charge légère ne doit pas faire échouer ce contrôle.
     if (allWorkingSets.length < plannedSets) {
-      return const _Validation(false,
-          'Toutes les séries n\'ont pas été validées à la dernière séance, '
-          'on reste au même poids');
+      return const _Validation(
+        false,
+        'Toutes les séries n\'ont pas été validées à la dernière séance, '
+        'on reste au même poids',
+        _FailKind.incompleteSets,
+      );
     }
     // À partir d'ici, on ne juge que les séries à la charge de travail.
     final minReps =
         workingWeightSets.map((s) => s.reps).reduce((a, b) => a < b ? a : b);
     if (minReps < repMin) {
+      // On référence la fourchette pour que, si elle a changé dans l'exercice,
+      // l'utilisateur voie tout de suite la nouvelle cible.
       return _Validation(
         false,
-        'On consolide ${fmtKg(workingWeightKg)}kg : vise $repMin reps sur '
-        'chaque série avant d\'ajouter de la charge',
+        'Reps sous ta fourchette ($repMin-$repMax) — on vise $repMin reps '
+        'à ${fmtKg(workingWeightKg)}kg avant d\'ajouter de la charge',
+        _FailKind.repsBelowRange,
       );
     }
     // Garde anti-fatigue : grosse chute de reps à charge constante.
@@ -457,6 +593,7 @@ class ProgressionEngine {
           'Grosse chute de reps à ${fmtKg(workingWeightKg)}kg '
           '($maxReps→$minReps) — signe de fatigue, on consolide ce poids '
           'avant d\'ajouter de la charge',
+          _FailKind.dropOff,
         );
       }
     }
@@ -468,8 +605,11 @@ class ProgressionEngine {
         final maxRpe =
             ratedSets.map((s) => s.rpe!).reduce((a, b) => a > b ? a : b);
         if (maxRpe > rpeThreshold) {
-          return const _Validation(false,
-              'RPE trop haut à la dernière séance pour augmenter à celle-ci');
+          return const _Validation(
+            false,
+            'RPE trop haut à la dernière séance pour augmenter à celle-ci',
+            _FailKind.rpe,
+          );
         }
       }
     }
@@ -477,8 +617,15 @@ class ProgressionEngine {
   }
 }
 
+/// Pourquoi la validation a échoué — sert à décider du correctif :
+/// seul [repsBelowRange] (la charge est trop lourde pour tenir le plancher
+/// de reps) déclenche le recalibrage e1RM. Les autres cas gardent la logique
+/// hold / deload classique.
+enum _FailKind { none, incompleteSets, repsBelowRange, dropOff, rpe }
+
 class _Validation {
   final bool passed;
   final String reason;
-  const _Validation(this.passed, this.reason);
+  final _FailKind kind;
+  const _Validation(this.passed, this.reason, [this.kind = _FailKind.none]);
 }

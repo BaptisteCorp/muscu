@@ -75,9 +75,19 @@ final sessionDetailProvider =
   return ref.watch(sessionRepositoryProvider).watchDetail(sessionId);
 });
 
+// Reactive lookup of a single exercise, derived from the live `watchAll`
+// stream. MUST stay reactive (not a one-shot FutureProvider): the active
+// session recomputes its progression target from this, so editing an
+// exercise (e.g. changing its rep range) has to flow through immediately —
+// otherwise the in-progress session keeps prescribing against the old range.
 final exerciseByIdProvider =
-    FutureProvider.family<Exercise?, String>((ref, id) {
-  return ref.watch(exerciseRepositoryProvider).getById(id);
+    Provider.family<AsyncValue<Exercise?>, String>((ref, id) {
+  return ref.watch(allExercisesProvider).whenData((list) {
+    for (final e in list) {
+      if (e.id == id) return e;
+    }
+    return null;
+  });
 });
 
 final exerciseHistoryProvider =

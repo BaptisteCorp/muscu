@@ -34,7 +34,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(QueryExecutor e) : super(e);
 
   @override
-  int get schemaVersion => 11;
+  int get schemaVersion => 12;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -101,7 +101,16 @@ class AppDatabase extends _$AppDatabase {
             // `progression_strategy` par 3 paramètres explicites.
             await m.addColumn(
                 exercises, exercises.progressiveOverloadEnabled);
-            await m.addColumn(exercises, exercises.progressionPriority);
+            // progression_priority a existé entre les schémas 8 et 11 puis a
+            // été supprimé (cf. migration from < 12). On l'ajoute ici en SQL
+            // brut — le getter Drift n'existe plus — pour préserver le chemin
+            // de migration historique ; il sera droppé juste après pour qui
+            // passe directement de <8 à >=12.
+            try {
+              await customStatement(
+                  "ALTER TABLE exercises ADD COLUMN progression_priority "
+                  "TEXT NOT NULL DEFAULT 'repsFirst';");
+            } catch (_) {/* déjà présente */}
             await m.addColumn(exercises, exercises.minimumRpeThreshold);
             // SQLite >= 3.35 supporte DROP COLUMN. Le plugin sqlite3_flutter_libs
             // embarque une version récente, mais on protège par try/catch :
@@ -120,6 +129,15 @@ class AppDatabase extends _$AppDatabase {
             // existing rows start null (= never edited) and don't clobber
             // real cloud settings on the next push-before-pull sync.
             await m.addColumn(userSettingsTable, userSettingsTable.updatedAt);
+          }
+          if (from < 12) {
+            // Suppression de la notion de priorité de progression
+            // (reps-first / weight-first) : on garde uniquement la double
+            // progression (reps puis poids). On drop la colonne devenue morte.
+            try {
+              await customStatement(
+                  'ALTER TABLE exercises DROP COLUMN progression_priority;');
+            } catch (_) {/* déjà absente */}
           }
         },
         onCreate: (m) async {

@@ -41,6 +41,22 @@ abstract class TemplateRepository {
     required String exerciseId,
     required int reps,
     required double? weightKg,
+    bool useBodyweight = false,
+  });
+
+  /// Nombre de modèles (non supprimés) qui référencent [exerciseId]. Sert à
+  /// avertir l'utilisateur quand il édite un exercice déjà utilisé.
+  Future<int> countTemplatesUsingExercise(String exerciseId);
+
+  /// Borne dans `[min, max]` les reps planifiées de toutes les séries de tous
+  /// les modèles qui référencent [exerciseId]. Appelé quand l'utilisateur change
+  /// la fourchette de reps d'un exercice : les valeurs planifiées (un snapshot)
+  /// ne doivent pas rester hors fourchette. Bumpe updatedAt/syncStatus des
+  /// modèles touchés pour propager au cloud.
+  Future<void> clampPlannedRepsForExercise({
+    required String exerciseId,
+    required int min,
+    required int max,
   });
 }
 
@@ -164,6 +180,7 @@ class LocalTemplateRepository implements TemplateRepository {
     required String exerciseId,
     required int reps,
     required double? weightKg,
+    bool useBodyweight = false,
   }) async {
     await db.transaction(() async {
       final teRows = await (db.select(db.workoutTemplateExercises)
@@ -182,22 +199,75 @@ class LocalTemplateRepository implements TemplateRepository {
               ..limit(1))
             .getSingleOrNull();
         if (existing != null) {
-          final currentWeight = existing.plannedWeightKg ?? 0;
-          final newWeight = weightKg ?? 0;
-          final isUp = newWeight > currentWeight ||
-              (newWeight == currentWeight &&
-                  reps > existing.plannedReps);
+          // Poids du corps : on ne compare QUE les reps (le poids est toujours
+          // 0/non pertinent). Sinon un `plannedWeightKg` résiduel non nul
+          // (ex. 20kg d'avant le fix) bloquerait à jamais la montée des reps,
+          // car 0 > 20 est faux. C'était la cause du "plan qui ne suit pas".
+          final isUp = useBodyweight
+              ? reps > existing.plannedReps
+              : (weightKg ?? 0) > (existing.plannedWeightKg ?? 0) ||
+                  ((weightKg ?? 0) == (existing.plannedWeightKg ?? 0) &&
+                      reps > existing.plannedReps);
           if (!isUp) continue;
         }
         await (db.update(db.templateExerciseSets)
               ..where((t) => t.templateExerciseId.equals(teRow.id)))
             .write(TemplateExerciseSetsCompanion(
           plannedReps: Value(reps),
-          plannedWeightKg: Value(weightKg),
+          // Au poids du corps on nettoie le poids planifié (toujours 0).
+          plannedWeightKg: Value(useBodyweight ? null : weightKg),
         ));
       }
       await (db.update(db.workoutTemplates)
             ..where((t) => t.id.equals(templateId)))
+          .write(WorkoutTemplatesCompanion(
+        updatedAt: Value(DateTime.now()),
+        syncStatus: const Value('pending'),
+      ));
+    });
+  }
+
+  @override
+  Future<int> countTemplatesUsingExercise(String exerciseId) async {
+    final teRows = await (db.select(db.workoutTemplateExercises)
+          ..where((t) => t.exerciseId.equals(exerciseId)))
+        .get();
+    if (teRows.isEmpty) return 0;
+    final templateIds = teRows.map((r) => r.templateId).toSet().toList();
+    final liveRows = await (db.select(db.workoutTemplates)
+          ..where((t) => t.id.isIn(templateIds) & t.deletedAt.isNull()))
+        .get();
+    return liveRows.length;
+  }
+
+  @override
+  Future<void> clampPlannedRepsForExercise({
+    required String exerciseId,
+    required int min,
+    required int max,
+  }) async {
+    await db.transaction(() async {
+      final teRows = await (db.select(db.workoutTemplateExercises)
+            ..where((t) => t.exerciseId.equals(exerciseId)))
+          .get();
+      if (teRows.isEmpty) return;
+      final teIds = teRows.map((r) => r.id).toList();
+      // Reps sous le plancher → plancher ; au-dessus du plafond → plafond.
+      final below = await (db.update(db.templateExerciseSets)
+            ..where((t) =>
+                t.templateExerciseId.isIn(teIds) &
+                t.plannedReps.isSmallerThanValue(min)))
+          .write(TemplateExerciseSetsCompanion(plannedReps: Value(min)));
+      final above = await (db.update(db.templateExerciseSets)
+            ..where((t) =>
+                t.templateExerciseId.isIn(teIds) &
+                t.plannedReps.isBiggerThanValue(max)))
+          .write(TemplateExerciseSetsCompanion(plannedReps: Value(max)));
+      if (below == 0 && above == 0) return;
+      // On bumpe tous les modèles référençant l'exo pour que la sync (LWW sur
+      // updated_at) reprenne les reps planifiées corrigées.
+      final templateIds = teRows.map((r) => r.templateId).toSet().toList();
+      await (db.update(db.workoutTemplates)..where((t) => t.id.isIn(templateIds)))
           .write(WorkoutTemplatesCompanion(
         updatedAt: Value(DateTime.now()),
         syncStatus: const Value('pending'),
